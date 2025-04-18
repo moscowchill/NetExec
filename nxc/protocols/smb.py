@@ -295,8 +295,8 @@ class smb(connection):
         except Exception as e:
             self.logger.debug(f"Error logging off system: {e}")
 
-        # Check smbv1
-        if not self.args.no_smbv1:
+        # Check smbv1 only if smbv3 did not connect or --no-smbv1 wasn't specified
+        if not self.args.no_smbv1 and not self.smbv3:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -577,8 +577,8 @@ class smb(connection):
             conn = SMBConnection(
                 self.remoteName,
                 self.host,
-                None,
-                self.port,
+                gen_random_string(15).upper(),  # Randomize client name (positional)
+                self.port, # Port (positional)
                 preferredDialect=SMB_DIALECT,
                 timeout=self.args.smb_timeout,
             )
@@ -608,8 +608,8 @@ class smb(connection):
             self.conn = SMBConnection(
                 self.remoteName,
                 self.host,
-                None,
-                self.port,
+                gen_random_string(15).upper(),  # Randomize client name (positional)
+                self.port, # Port (positional)
                 timeout=self.args.smb_timeout,
             )
             self.smbv3 = True
