@@ -12,6 +12,7 @@ from socket import AF_UNSPEC, SOCK_DGRAM, IPPROTO_IP, AI_CANONNAME, getaddrinfo
 
 from nxc.config import pwned_label
 from nxc.helpers.logger import highlight
+from nxc.helpers.misc import countdown_timer
 from nxc.loaders.moduleloader import ModuleLoader
 from nxc.logger import nxc_logger, NXCAdapter
 from nxc.context import Context
@@ -226,12 +227,24 @@ class connection:
     def proto_flow(self):
         self.logger.debug("Kicking off proto_flow")
         self.proto_logger()
+
+        # Delay before initial connection attempt
+        if not self.args.no_delays:
+            self.logger.debug("Applying delay before connection attempt")
+            countdown_timer()
+
         if not self.create_conn_obj():
             self.logger.info(f"Failed to create connection object for target {self.host}, exiting...")
         else:
             self.logger.debug("Created connection object")
             self.enum_host_info()
             self.print_host_info()
+
+            # Delay before login attempts
+            if not self.args.no_delays:
+                self.logger.debug("Applying delay before login attempts")
+                countdown_timer()
+
             if self.login() or (self.username == "" and self.password == ""):
                 if hasattr(self.args, "module") and self.args.module:
                     self.load_modules()

@@ -3,7 +3,118 @@ import string
 import re
 import inspect
 import os
+import sys
+import time
 
+
+# Define plausible service names for use in tools like smbexec
+PLAUSIBLE_SERVICE_NAMES = [
+    "WinDriverSync",
+    "DFSShareSync",
+    "ChromeUpdate",
+    "AdobeFlashHelper",
+    "OfficeLicenseCheck",
+    "NetworkConfigSvc",
+    "SysHealthMonitor",
+    "PrinterSpoolerFix",
+    "WindowsBackupUtil",
+    "JavaRuntimeSync",
+    "AudioDriverSvc",
+    "DiskOptimizerSvc",
+]
+
+
+# Define plausible usernames for guest/null sessions
+PLAUSIBLE_USERNAMES = [
+    "PrinterQueue",
+    "svc_helpdesk",
+    "svc_backup",
+    "svc_temp",
+    "svc_support",
+    "svc_scanner",
+    "intern",
+    "reception",
+    "HelpDesk",
+    "guestuser",
+    "training",
+    "labuser",
+    "Guest",
+    "Anonymous",
+    "PrintSpooler",
+    "SQLServer",
+    "SQLServerAgent",
+    "SQLServerBrowser",
+    "SQLServerImport",
+    "SQLServerExport",
+    "SQLServerReporting",
+    "SQLServerAnalysis",
+    "SQLServerFullText",
+    "SQLServerIntegration",
+    "SQLServerServiceBroker",
+    "SQLServerReporting",
+]
+
+
+# Define plausible client hostnames for SMB connections
+PLAUSIBLE_CLIENT_NAMES = [
+    "HP-LaserJet-Pro",
+    "Canon_Scanner_Office",
+    "BRN_Printer",
+    "EPSON-WF-Series",
+    "DESKTOP-ScanSrv",
+    "SonosZP",
+    "LivingRoomSpeaker",
+    "KitchenDisplay",
+    "SecurityCam_FrontDoor",
+    "NVR_System",
+    "SolarEdgeInverter",
+    "EnphaseEnvoy",
+    "SmartThingsHub",
+    "PhilipsHueBridge",
+    "Netgear-NAS",
+    "SynologyDS",
+    "TP-Link_AP",
+    "UniFi-AP-AC-Pro",
+    "MyBookLive",
+    "MEDIA-SERVER",
+    "KONICA_MINOLTA_Bizhub",
+    "Xerox-WorkCentre",
+    "Ricoh-MP-CSeries",
+    "Lexmark_Printer",
+    "Kyocera_ECOSYS",
+    "Sharp_MX_Series",
+    "Roomba_LivingRoom",
+    "ECOVACS-DEEBOT",
+    "Nest_Thermostat",
+    "ecobee_Office",
+    "RaspberryPi_Media",
+    "HomeAssistant",
+    "PlexMediaServer",
+    "Logitech_ConferenceCam",
+    "Polycom_Trio",
+    "Cisco_IP_Phone",
+    "Yealink_DeskPhone",
+    "AppleTV_Lobby",
+    "FireStick_MeetingRoom",
+    "Chromecast_BreakRoom",
+    "roku-ultra",
+    "Hikvision_Camera",
+    "Axis_Doorbell",
+    "myq-garage",
+    "POS-Terminal-1",
+]
+
+def countdown_timer(min_delay=3, max_delay=6):
+    """Generates a random delay and displays a countdown timer in the terminal."""
+    duration = random.randint(min_delay, max_delay)
+    for i in range(duration, 0, -1):
+        # Use sys.stdout.write and carriage return to overwrite the line
+        sys.stdout.write(f"\r[+] Applying tactical delay... {i}s remaining ")
+        sys.stdout.flush()
+        time.sleep(1)
+    # Clear the countdown line after completion
+    sys.stdout.write("\r" + " " * 30 + "\r")
+    sys.stdout.flush()
 
 def identify_target_file(target_file):
     with open(target_file) as target_file_handle:

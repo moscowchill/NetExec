@@ -33,6 +33,7 @@ def gen_cli_args():
     generic_group.add_argument("-t", "--threads", type=int, dest="threads", default=256, help="set how many concurrent threads to use")
     generic_group.add_argument("--timeout", default=None, type=int, help="max timeout in seconds of each thread")
     generic_group.add_argument("--jitter", metavar="INTERVAL", type=str, help="sets a random delay between each authentication")
+    generic_group.add_argument("--no-delays", action="store_true", help="Skip all tactical delays (connection, smbexec, etc.)")
     
     output_parser = argparse.ArgumentParser(add_help=False, formatter_class=DisplayDefaultsNotNone)
     output_group = output_parser.add_argument_group("Output", "Options to set verbosity levels and control output")

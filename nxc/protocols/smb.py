@@ -2,6 +2,9 @@ import ntpath
 import binascii
 import os
 import re
+import random
+import time
+import sys
 from Cryptodome.Hash import MD4
 
 from impacket.smbconnection import SMBConnection, SessionError
@@ -37,7 +40,7 @@ from impacket.dcerpc.v5 import tsts as TSTS
 
 from nxc.config import process_secret, host_info_colors
 from nxc.connection import connection, sem, requires_admin, dcom_FirewallChecker
-from nxc.helpers.misc import gen_random_string, validate_ntlm
+from nxc.helpers.misc import gen_random_string, validate_ntlm, countdown_timer, PLAUSIBLE_USERNAMES, PLAUSIBLE_CLIENT_NAMES
 from nxc.logger import NXCAdapter
 from nxc.paths import NXC_PATH
 from nxc.protocols.smb.dpapi import collect_masterkeys_from_target, get_domain_backup_key, upgrade_to_dploot_connection
@@ -63,7 +66,6 @@ from dploot.triage.credentials import CredentialsTriage
 from dploot.lib.target import Target
 from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
-from time import time, ctime
 from datetime import datetime
 from functools import wraps
 from traceback import format_exc
@@ -73,6 +75,7 @@ import contextlib
 
 smb_share_name = gen_random_string(5).upper()
 smb_server = None
+
 
 smb_error_status = [
     "STATUS_ACCOUNT_DISABLED",
@@ -215,14 +218,25 @@ class smb(connection):
         self.local_ip = self.conn.getSMBServer().get_socket().getsockname()[0]
 
         try:
-            self.conn.login("", "")
+            self.logger.display("Retrieving host information...")
+            random_username = random.choice(PLAUSIBLE_USERNAMES)
+            self.logger.debug(f"Attempting {random_username} login to {self.hostname} for enumeration")
+            self.conn.login(random_username, "", self.hostname)
         except BrokenPipeError:
-            self.logger.fail("Broken Pipe Error while attempting to login")
-        except Exception as e:
-            if "STATUS_NOT_SUPPORTED" in str(e):
-                # no ntlm supported
+            self.logger.fail("Broken Pipe Error while attempting initial plausible login")
+        except SessionError as e:
+            # Handle potential login failure (e.g., Guest disabled)
+            error, desc = e.getErrorString()
+            self.logger.debug(f"Initial {random_username} login failed: {error} {desc}")
+            if "STATUS_NOT_SUPPORTED" in str(e): # Check if NTLM itself is disabled
                 self.no_ntlm = True
-                self.logger.debug("NTLM not supported")
+                self.logger.debug("NTLM not supported (detected during login attempt)")
+        except Exception as e:
+            # Catch other potential errors
+            self.logger.debug(f"Unexpected error during initial {random_username} login: {e}")
+            if "STATUS_NOT_SUPPORTED" in str(e):
+                self.no_ntlm = True
+                self.logger.debug("NTLM not supported (detected during login attempt)")
 
         # self.domain is the attribute we authenticate with
         # self.targetDomain is the attribute which gets displayed as host domain
@@ -372,6 +386,10 @@ class smb(connection):
         self.logger.debug(f"KDC set to: {kdcHost}")
         # Re-connect since we logged off
         self.create_conn_obj()
+        # Apply tactical delay before authentication attempt
+        if not self.args.no_delays:
+            self.logger.debug("Applying delay before Kerberos login attempt")
+            countdown_timer()
         lmhash = ""
         nthash = ""
 
@@ -462,6 +480,10 @@ class smb(connection):
     def plaintext_login(self, domain, username, password):
         # Re-connect since we logged off
         self.create_conn_obj()
+        # Apply tactical delay before authentication attempt
+        if not self.args.no_delays:
+            self.logger.debug("Applying delay before plaintext login attempt")
+            countdown_timer()
         try:
             self.password = password
             self.username = username
@@ -514,6 +536,10 @@ class smb(connection):
     def hash_login(self, domain, username, ntlm_hash):
         # Re-connect since we logged off
         self.create_conn_obj()
+        # Apply tactical delay before authentication attempt
+        if not self.args.no_delays:
+            self.logger.debug("Applying delay before hash login attempt")
+            countdown_timer()
         lmhash = ""
         nthash = ""
         try:
@@ -575,12 +601,13 @@ class smb(connection):
             return False
 
     def create_smbv1_conn(self, check=False):
+        sys.stdout.write(f"\r[+] SMBv1 falback for some reason \n")
         self.logger.info(f"Creating SMBv1 connection to {self.host}")
         try:
             conn = SMBConnection(
+                random.choice(PLAUSIBLE_CLIENT_NAMES), # Use a random plausible client name
                 self.remoteName,
                 self.host,
-                gen_random_string(15).upper(),  # Randomize client name (positional)
                 self.port, # Port (positional)
                 preferredDialect=SMB_DIALECT,
                 timeout=self.args.smb_timeout,
@@ -609,9 +636,9 @@ class smb(connection):
         self.logger.info(f"Creating SMBv3 connection to {self.host}")
         try:
             self.conn = SMBConnection(
+                random.choice(PLAUSIBLE_CLIENT_NAMES), # Use a random plausible client name
                 self.remoteName,
                 self.host,
-                gen_random_string(15).upper(),  # Randomize client name (positional)
                 self.port, # Port (positional)
                 timeout=self.args.smb_timeout,
             )
@@ -693,7 +720,8 @@ class smb(connection):
         if getattr(self.args, "exec_method_explicitly_set", False):
             methods = [self.args.exec_method]
         if not methods:
-            methods = ["wmiexec", "atexec", "smbexec", "mmcexec"]
+            # Default methods order: try smbexec first if available
+            methods = ["smbexec", "wmiexec", "atexec", "mmcexec"]
 
         if not payload and self.args.execute:
             payload = self.args.execute
