@@ -497,9 +497,20 @@ class smb(connection):
 
             self.logger.debug(f"Adding credential: {domain}/{self.username}:{self.password}")
             self.db.add_credential("plaintext", domain, self.username, self.password)
+            self.logger.debug(f"Attempting to get user ID for {domain}/{self.username}")
             user_id = self.db.get_credential("plaintext", domain, self.username, self.password)
-            host_id = self.db.get_hosts(self.host)[0].id
+            self.logger.debug(f"User ID obtained: {user_id}")
+            self.logger.debug(f"Attempting to get host ID for {self.host}")
+            host_entry = self.db.get_hosts(self.host)
+            self.logger.debug(f"Host entry result: {host_entry}")
+            if not host_entry:
+                self.logger.error(f"Could not find host entry for {self.host} in DB!")
+                return False
+            host_id = host_entry[0].id
+            self.logger.debug(f"Host ID obtained: {host_id}")
+            self.logger.debug(f"Attempting to add loggedin relation: user={user_id}, host={host_id}")
             self.db.add_loggedin_relation(user_id, host_id)
+            self.logger.debug(f"Loggedin relation added")
 
             out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_pwned()}"
             self.logger.success(out)
