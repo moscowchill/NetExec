@@ -425,9 +425,13 @@ class smb(connection):
 
             self.conn.kerberosLogin(self.username, password, domain, lmhash, nthash, aesKey, kdcHost, useCache=useCache, TGS=tgs)
             
-            # Always check admin status regardless of OS type
-            self.check_if_admin()
-            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            # Only run admin check on Windows (Unix has different admin privileges model)
+            if "Unix" not in self.server_os:
+                self.check_if_admin()
+                self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            else:
+                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.admin_privs = False
 
             if username == "":
                 self.username = self.conn.getCredentials()[0]
@@ -496,9 +500,13 @@ class smb(connection):
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
             
-            # Always check admin status regardless of OS type
-            self.check_if_admin()
-            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            # Only run admin check on Windows (Unix has different admin privileges model)
+            if "Unix" not in self.server_os:
+                self.check_if_admin()
+                self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            else:
+                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.admin_privs = False
 
             self.logger.debug(f"Adding credential: {domain}/{self.username}:{self.password}")
             self.db.add_credential("plaintext", domain, self.username, self.password)
@@ -579,9 +587,13 @@ class smb(connection):
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
             
-            # Always check admin status regardless of OS type
-            self.check_if_admin()
-            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            # Only run admin check on Windows (Unix has different admin privileges model)
+            if "Unix" not in self.server_os:
+                self.check_if_admin()
+                self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
+            else:
+                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.admin_privs = False
 
             self.db.add_credential("hash", domain, self.username, self.hash)
             user_id = self.db.get_credential("hash", domain, self.username, self.hash)
@@ -698,6 +710,12 @@ class smb(connection):
         # Initialize additional UAC tracking attribute
         self.is_rid500 = False
         
+        # Skip admin checks for Unix systems
+        if "Unix" in self.server_os:
+            self.logger.debug("Unix system detected, admin check skipped")
+            self.admin_privs = False
+            return
+            
         # Method 1: Check access to admin$ share
         try:
             self.logger.debug("Checking admin rights via admin$ share access...")
