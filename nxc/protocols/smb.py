@@ -5,6 +5,7 @@ import re
 import random
 import time
 import sys
+from time import sleep
 from Cryptodome.Hash import MD4
 
 from impacket.smbconnection import SMBConnection, SessionError
@@ -423,8 +424,10 @@ class smb(connection):
                 self.logger.debug(f"Got TGS for {self.args.delegate} through S4U")
 
             self.conn.kerberosLogin(self.username, password, domain, lmhash, nthash, aesKey, kdcHost, useCache=useCache, TGS=tgs)
-            if "Unix" not in self.server_os:
-                self.check_if_admin()
+            
+            # Always check admin status regardless of OS type
+            self.check_if_admin()
+            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
 
             if username == "":
                 self.username = self.conn.getCredentials()[0]
@@ -492,8 +495,10 @@ class smb(connection):
             self.logger.debug(f"Logged in with password to SMB with {domain}/{self.username}")
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
-            if "Unix" not in self.server_os:
-                self.check_if_admin()
+            
+            # Always check admin status regardless of OS type
+            self.check_if_admin()
+            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
 
             self.logger.debug(f"Adding credential: {domain}/{self.username}:{self.password}")
             self.db.add_credential("plaintext", domain, self.username, self.password)
@@ -573,8 +578,10 @@ class smb(connection):
             self.logger.debug(f"Logged in with hash to SMB with {domain}/{self.username}")
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
-            if "Unix" not in self.server_os:
-                self.check_if_admin()
+            
+            # Always check admin status regardless of OS type
+            self.check_if_admin()
+            self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
 
             self.db.add_credential("hash", domain, self.username, self.hash)
             user_id = self.db.get_credential("hash", domain, self.username, self.hash)
@@ -688,12 +695,17 @@ class smb(connection):
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
         
+        # Initialize additional UAC tracking attribute
+        self.is_rid500 = False
+        
         # Method 1: Check access to admin$ share
         try:
             self.logger.debug("Checking admin rights via admin$ share access...")
             self.conn.connectTree("admin$")
             self.logger.debug("Successfully connected to admin$ share - user is admin!")
             self.admin_privs = True
+            # Still need to determine if RID 500
+            self.check_rid500()
             return
         except Exception as e:
             self.logger.debug(f"Failed to connect to admin$ share: {e!s}")
@@ -705,6 +717,8 @@ class smb(connection):
             self.conn.listPath("C$", "Windows\\System32")
             self.logger.debug("Successfully listed System32 directory - user likely has admin rights")
             self.admin_privs = True
+            # Still need to determine if RID 500
+            self.check_rid500()
             return
         except Exception as e:
             self.logger.debug(f"Failed to access System32: {e!s}")
@@ -788,6 +802,8 @@ class smb(connection):
             if success:
                 self.logger.debug("User appears to have admin privileges based on SCM access")
                 self.admin_privs = True
+                # Still need to determine if RID 500
+                self.check_rid500()
             else:
                 self.logger.debug("User does not appear to have admin privileges based on SCM tests")
                 self.admin_privs = False
@@ -809,9 +825,106 @@ class smb(connection):
                 # Clean up
                 self.conn.deleteDirectory("C$", test_dir)
                 self.admin_privs = True
+                # Still need to determine if RID 500
+                self.check_rid500()
             except Exception as e:
                 self.logger.debug(f"Failed write access test: {e!s}")
                 self.admin_privs = False
+    
+    def check_rid500(self):
+        """
+        Determine if the current user is the built-in Administrator (RID 500)
+        which bypasses UAC by default.
+        
+        This method tries several approaches to determine if the user is RID 500:
+        1. Look at username (weak indicator)
+        2. Examine if we got auto-elevated privileges
+        """
+        self.is_rid500 = False
+        
+        # First, check the most basic indicators
+        try:
+            # Simple check: If the username is literally "Administrator", it's likely RID 500
+            # This is not reliable but a good first indicator for local accounts
+            if self.username.lower() == "administrator" and (self.args.local_auth or self.domain.lower() == self.hostname.lower()):
+                self.logger.debug("Username is 'Administrator' in local context - likely RID 500")
+                self.is_rid500 = True
+                return
+                
+            # If we got seamless admin access to C$ and admin$ without UAC prompts,
+            # that's a good indicator we're either RID 500 or have UAC disabled
+            if self.admin_privs and not self.args.kerberos:
+                self.logger.debug("User has admin privileges without using Kerberos - likely RID 500 or UAC disabled")
+                # We got admin access without Kerberos authentication 
+                # (which would bypass the UAC restrictions)
+                
+                # Check if we can create a service - only built-in admin should be able to do this without UAC prompts
+                try:
+                    stringbinding = rf"ncacn_np:{self.host}[\\pipe\\svcctl]"
+                    rpctransport = transport.DCERPCTransportFactory(stringbinding)
+                    rpctransport.set_dport(445)
+                    
+                    if hasattr(rpctransport, "set_credentials"):
+                        rpctransport.set_credentials(
+                            self.username, 
+                            self.password,
+                            self.domain,
+                            self.lmhash,
+                            self.nthash,
+                            self.aesKey
+                        )
+                    
+                    dce = rpctransport.get_dce_rpc()
+                    dce.connect()
+                    dce.bind(scmr.MSRPC_UUID_SCMR)
+                    
+                    # Try to open with service creation access
+                    resp = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0x0002) # SC_MANAGER_CREATE_SERVICE
+                    scHandle = resp['lpScHandle']
+                    
+                    # If we got here without error, we likely have RID 500 or UAC disabled
+                    self.is_rid500 = True 
+                    self.logger.debug("User can create services without elevation - confirmed admin RID 500 or UAC disabled")
+                    
+                    # Close handle
+                    scmr.hRCloseServiceHandle(dce, scHandle)
+                    dce.disconnect()
+                    
+                except Exception as e:
+                    self.logger.debug(f"Service creation test failed, likely subject to UAC: {e}")
+                    # This user can't create services - likely a standard admin account subject to UAC
+
+        except Exception as e:
+            self.logger.debug(f"Error during RID 500 check: {e}")
+            # Default to False if we couldn't determine
+            self.is_rid500 = False
+    
+    def mark_pwned(self):
+        """
+        Enhanced mark_pwned to include UAC bypass availability and distinguish between 
+        domain and local administrators
+        """
+        if not self.admin_privs:
+            return ""
+            
+        # Get the configured pwn3d label from config using the standard pattern
+        try:
+            pwn3d_label = self.config.get('nxc', 'pwn3d_label')
+        except:
+            # Fallback to default if config access fails
+            pwn3d_label = "Admin!"
+            
+        # Determine if we're a local or domain admin
+        # If local_auth flag is set or domain equals hostname, we're dealing with a local admin
+        is_local_admin = self.args.local_auth or self.domain.lower() == self.hostname.lower()
+        
+        admin_type = "Local Admin" if is_local_admin else "Domain Admin"
+        
+        # Check if we're RID 500 (built-in Administrator which bypasses UAC)
+        if hasattr(self, 'is_rid500') and self.is_rid500:
+            return highlight(f"({pwn3d_label} - RID 500 {admin_type})")
+        else:
+            return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
