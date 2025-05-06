@@ -687,26 +687,130 @@ class smb(connection):
 
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
+        
+        # Method 1: Check access to admin$ share
+        try:
+            self.logger.debug("Checking admin rights via admin$ share access...")
+            self.conn.connectTree("admin$")
+            self.logger.debug("Successfully connected to admin$ share - user is admin!")
+            self.admin_privs = True
+            return
+        except Exception as e:
+            self.logger.debug(f"Failed to connect to admin$ share: {e!s}")
+        
+        # Method 2: Attempt a privileged file operation
+        try:
+            self.logger.debug("Checking admin rights via SYSTEM32 access...")
+            tid = self.conn.connectTree("C$")
+            self.conn.listPath("C$", "Windows\\System32")
+            self.logger.debug("Successfully listed System32 directory - user likely has admin rights")
+            self.admin_privs = True
+            return
+        except Exception as e:
+            self.logger.debug(f"Failed to access System32: {e!s}")
+        
+        # Method 3: Try with SCMR if the previous methods failed
         rpctransport = SMBTransport(self.conn.getRemoteHost(), 445, r"\svcctl", smb_connection=self.conn)
         dce = rpctransport.get_dce_rpc()
         try:
+            self.logger.debug("Attempting DCE connect...")
             dce.connect()
-        except Exception:
+            self.logger.debug("DCE connect successful")
+        except Exception as e:
+            self.logger.debug(f"DCE connect failed: {e!s}")
             self.admin_privs = False
+            return
         else:
-            with contextlib.suppress(Exception):
-                dce.bind(scmr.MSRPC_UUID_SCMR)
             try:
-                # 0xF003F - SC_MANAGER_ALL_ACCESS
-                # http://msdn.microsoft.com/en-us/library/windows/desktop/ms685981(v=vs.85).aspx
-                scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0xF003F)
-                scmr.hREnumServicesStatusW(dce, scmrobj["lpScHandle"])
-                self.logger.debug(f"User is admin on {self.host}!")
-                self.admin_privs = True
-            except scmr.DCERPCException:
-                self.admin_privs = False
+                self.logger.debug("Attempting DCE bind to SCMR...")
+                dce.bind(scmr.MSRPC_UUID_SCMR)
+                self.logger.debug("DCE bind successful")
             except Exception as e:
-                self.logger.fail(f"Error checking if user is admin on {self.host}: {e}")
+                self.logger.debug(f"DCE bind failed: {e!s}")
+                self.admin_privs = False
+                # We might still want to proceed, but log that bind failed
+                # return # Optional: exit if bind fails
+
+            # Try with multiple different access levels, starting with the lowest
+            access_tests = [
+                (0x00000001, "SC_MANAGER_CONNECT", "Basic connectivity"),
+                (0x00000002, "SC_MANAGER_CREATE_SERVICE", "Service creation"),
+                (0x00000004, "SC_MANAGER_ENUMERATE_SERVICE", "Service enumeration"),
+                (0x00000008, "SC_MANAGER_LOCK", "SCM locking"),
+                (0x00000010, "SC_MANAGER_QUERY_LOCK_STATUS", "Lock status query"),
+                (0x00000020, "SC_MANAGER_MODIFY_BOOT_CONFIG", "Boot config modification"),
+                (0x00020001, "SC_MANAGER_ENUMERATE_SERVICE | SC_MANAGER_CONNECT", "UAC-compatible check"),
+                (0x000F003F, "SC_MANAGER_ALL_ACCESS", "Full access check")
+            ]
+            
+            success = False
+            for access_bit, name, desc in access_tests:
+                try:
+                    self.logger.debug(f"Trying SCManager with {name} ({desc}) access rights...")
+                    scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", access_bit)
+                    self.logger.debug(f"SCManager open with {name} successful!")
+                    success = True
+                    
+                    # If we got basic access, try to enumerate services as an additional check
+                    if access_bit & 0x00000004:  # Has enumerate permission
+                        try:
+                            self.logger.debug("Attempting to enumerate services...")
+                            scmr.hREnumServicesStatusW(dce, scmrobj["lpScHandle"])
+                            self.logger.debug("Service enumeration successful!")
+                        except Exception as e:
+                            self.logger.debug(f"Service enumeration failed: {e!s}")
+                    
+                    # If we can create services, that's definitive proof of admin
+                    if access_bit & 0x00000002 and success:  # Has create service permission
+                        try:
+                            self.logger.debug("Attempting service creation test...")
+                            service_name = f"NXCTempSvc{random.randint(10000, 99999)}\x00"
+                            resp = scmr.hRCreateServiceW(dce, 
+                                                      scmrobj['lpScHandle'], 
+                                                      service_name, 
+                                                      service_name, 
+                                                      lpBinaryPathName=f"C:\\Windows\\System32\\cmd.exe\x00")
+                            
+                            service_handle = resp['lpServiceHandle']
+                            scmr.hRDeleteService(dce, service_handle)
+                            scmr.hRCloseServiceHandle(dce, service_handle)
+                            self.logger.debug("Successfully created and deleted test service!")
+                        except Exception as e:
+                            self.logger.debug(f"Service creation test failed: {e!s}")
+                    
+                    break  # No need to try higher access levels if this one worked
+                
+                except scmr.DCERPCException as e:
+                    self.logger.debug(f"SCManager open with {name} failed: {e!s}")
+                except Exception as e:
+                    self.logger.debug(f"Unexpected error testing {name}: {e!s}")
+            
+            if success:
+                self.logger.debug("User appears to have admin privileges based on SCM access")
+                self.admin_privs = True
+            else:
+                self.logger.debug("User does not appear to have admin privileges based on SCM tests")
+                self.admin_privs = False
+                
+            try:
+                dce.disconnect()
+                self.logger.debug("DCE disconnected")
+            except Exception as e:
+                self.logger.debug(f"Error during DCE disconnect: {e!s}")
+                
+        # Method 4: Check if user can write to C$ in a non-standard location
+        if not self.admin_privs:
+            try:
+                self.logger.debug("Trying write access test to C$ as final check...")
+                tid = self.conn.connectTree("C$")
+                test_dir = f"Windows\\Temp\\nxc_test_{random.randint(10000, 99999)}"
+                self.conn.createDirectory("C$", test_dir)
+                self.logger.debug(f"Successfully created test directory in C$\\{test_dir} - user has admin rights")
+                # Clean up
+                self.conn.deleteDirectory("C$", test_dir)
+                self.admin_privs = True
+            except Exception as e:
+                self.logger.debug(f"Failed write access test: {e!s}")
                 self.admin_privs = False
 
     def gen_relay_list(self):
@@ -758,20 +862,37 @@ class smb(connection):
         -------
             str: The output of the command
         """
+        # Add detailed logging of execution method selection
+        self.logger.debug(f"Execute called with methods={methods}, exec_method={self.args.exec_method}, explicitly_set={getattr(self.args, 'exec_method_explicitly_set', False)}")
+        
+        # Check if user explicitly set a method with --exec-method flag
+        # But only use it exclusively if exec_method_explicitly_set is True
         if getattr(self.args, "exec_method_explicitly_set", False):
+            self.logger.debug(f"Using explicitly set execution method: {self.args.exec_method}")
             methods = [self.args.exec_method]
-        if not methods:
-            # Default methods order: try smbexec first if available
-            methods = ["smbexec", "wmiexec", "atexec", "mmcexec"]
+        else:
+            # If methods not provided and not explicitly set, use default order
+            if not methods:
+                # Default methods order: try smbexec first if available
+                methods = ["smbexec", "wmiexec", "atexec", "mmcexec"]
+                self.logger.debug(f"Using default execution methods order: {methods}")
+            else:
+                self.logger.debug(f"Using provided execution methods: {methods}")
 
         if not payload and self.args.execute:
             payload = self.args.execute
             if not self.args.no_output:
                 get_output = True
 
+        self.logger.debug(f"Will try methods in this order: {methods}")
         current_method = ""
+        attempted_methods = []
+        
         for method in methods:
             current_method = method
+            attempted_methods.append(method)
+            self.logger.debug(f"Attempting execution via {method}...")
+            
             if method == "wmiexec":
                 try:
                     exec_method = WMIEXEC(
@@ -791,9 +912,10 @@ class smb(connection):
                         timeout=self.args.dcom_timeout,
                         tries=self.args.get_output_tries
                     )
-                    self.logger.info("Executed command via wmiexec")
+                    self.logger.info("Execution method wmiexec initialized successfully")
                     break
-                except Exception:
+                except Exception as e:
+                    self.logger.debug(f"Error setting up wmiexec: {str(e)}")
                     self.logger.debug("Error executing command via wmiexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -819,9 +941,10 @@ class smb(connection):
                         timeout=self.args.dcom_timeout,
                         tries=self.args.get_output_tries
                     )
-                    self.logger.info("Executed command via mmcexec")
+                    self.logger.info("Execution method mmcexec initialized successfully")
                     break
-                except Exception:
+                except Exception as e:
+                    self.logger.debug(f"Error setting up mmcexec: {str(e)}")
                     self.logger.debug("Error executing command via mmcexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -842,9 +965,10 @@ class smb(connection):
                         self.args.get_output_tries,
                         self.args.share
                     )
-                    self.logger.info("Executed command via atexec")
+                    self.logger.info("Execution method atexec initialized successfully")
                     break
-                except Exception:
+                except Exception as e:
+                    self.logger.debug(f"Error setting up atexec: {str(e)}")
                     self.logger.debug("Error executing command via atexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -867,9 +991,10 @@ class smb(connection):
                         self.logger,
                         self.args.get_output_tries
                     )
-                    self.logger.info("Executed command via smbexec")
+                    self.logger.info("Execution method smbexec initialized successfully")
                     break
-                except Exception:
+                except Exception as e:
+                    self.logger.debug(f"Error setting up smbexec: {str(e)}")
                     self.logger.debug("Error executing command via smbexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -878,6 +1003,7 @@ class smb(connection):
             self.server.track_host(self.host)
 
         if "exec_method" in locals():
+            self.logger.debug(f"Successfully initialized {current_method} after trying: {attempted_methods}")
             output = exec_method.execute(payload, get_output)
             try:
                 if not isinstance(output, str):
@@ -901,7 +1027,7 @@ class smb(connection):
                         self.logger.highlight(line)
             return output
         else:
-            self.logger.fail(f"Execute command failed with {current_method}")
+            self.logger.fail(f"All execution methods failed: {attempted_methods}")
             return ""
 
     @requires_admin

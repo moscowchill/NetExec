@@ -45,6 +45,8 @@ class SMBEXEC:
         self.__kdcHost = kdcHost
         self.__tries = tries
         self.logger = logger
+        # Get no_delays parameter from logger.args if available, default to False if not
+        self.__no_delays = getattr(logger, 'args', {}).get('no_delays', False) if hasattr(logger, 'args') else False
 
         if hashes is not None:
             # This checks to see if we didn't provide the LM Hash
@@ -141,7 +143,7 @@ class SMBEXEC:
 
         try:
             # Introduce delay before creating service
-            if not self.logger.args.no_delays:
+            if not self.__no_delays:
                 self.logger.debug("Applying delay before creating service")
                 countdown_timer()
             self.logger.debug(f"Creating remote service {self.__serviceName}")
@@ -164,7 +166,7 @@ class SMBEXEC:
 
         try:
             # Introduce delay before starting service
-            if not self.logger.args.no_delays:
+            if not self.__no_delays:
                 self.logger.debug("Applying delay before starting service")
                 countdown_timer()
             self.logger.debug(f"Starting remote service {self.__serviceName}")
@@ -174,7 +176,7 @@ class SMBEXEC:
 
         try:
             # Introduce delay before deleting service
-            if not self.logger.args.no_delays:
+            if not self.__no_delays:
                 self.logger.debug("Applying delay before deleting service")
                 countdown_timer()
             self.logger.debug(f"Deleting remote service {self.__serviceName}")
@@ -252,10 +254,10 @@ class SMBEXEC:
             batch_file.write(local_batch_command)
 
         self.logger.debug("Hosting batch file with command: " + local_batch_command)
-        self.logger.debug("Command to execute: " + command)
+        self.logger.debug("Command to execute: " + local_batch_command)
 
         # Introduce delay before creating service
-        if not self.logger.args.no_delays:
+        if not self.__no_delays:
             self.logger.debug("Applying delay before creating service")
             countdown_timer()
         self.logger.debug(f"Creating remote service {self.__serviceName}")
@@ -264,14 +266,14 @@ class SMBEXEC:
             self.__scHandle,
             self.__serviceName,
             self.__serviceName,
-            lpBinaryPathName=command,
+            lpBinaryPathName=local_batch_command,
             dwStartType=scmr.SERVICE_DEMAND_START,
         )
         service = resp["lpServiceHandle"]
 
         try:
             # Introduce delay before starting service
-            if not self.logger.args.no_delays:
+            if not self.__no_delays:
                 self.logger.debug("Applying delay before starting service")
                 countdown_timer()
             self.logger.debug(f"Starting remote service {self.__serviceName}")
@@ -279,7 +281,7 @@ class SMBEXEC:
         except Exception:
             pass
         # Introduce delay before deleting service
-        if not self.logger.args.no_delays:
+        if not self.__no_delays:
             self.logger.debug("Applying delay before deleting service")
             countdown_timer()
         self.logger.debug(f"Deleting remote service {self.__serviceName}")
