@@ -2395,7 +2395,7 @@ class smb(connection):
             samrConnectResponse = samr.hSamrConnect(dce)
             serverHandle = samrConnectResponse['ServerHandle']
             
-            # 2. Call SamrLookupDomain to get the domain SID
+            # 2. Call SamrLookupDomainInSamServer to get the domain SID
             try:
                 # First try with the provided domain name
                 sid_lookup_domain = self.domain
@@ -2403,53 +2403,53 @@ class smb(connection):
                     # For local accounts, use "Builtin" domain
                     sid_lookup_domain = "Builtin"
                     
-                samrLookupDomainResponse = samr.hSamrLookupDomain(
+                lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
                     dce, 
                     serverHandle, 
                     sid_lookup_domain
                 )
-                domainSID = samrLookupDomainResponse['DomainId']
+                domainSID = lookupDomainResponse['DomainId']
             except DCERPCException as e:
                 self.logger.debug(f"Error looking up domain SID for {self.domain}: {e}")
                 # If lookup with domain fails, try with hostname for local accounts
                 try:
-                    samrLookupDomainResponse = samr.hSamrLookupDomain(
+                    lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
                         dce, 
                         serverHandle, 
                         self.hostname
                     )
-                    domainSID = samrLookupDomainResponse['DomainId']
+                    domainSID = lookupDomainResponse['DomainId']
                 except DCERPCException as e:
                     self.logger.debug(f"Error looking up hostname SID for {self.hostname}: {e}")
                     # Last resort - try builtin domain
                     try:
-                        samrLookupDomainResponse = samr.hSamrLookupDomain(
+                        lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
                             dce, 
                             serverHandle, 
                             "Builtin"
                         )
-                        domainSID = samrLookupDomainResponse['DomainId']
+                        domainSID = lookupDomainResponse['DomainId']
                     except DCERPCException as e:
                         self.logger.debug(f"Error looking up Builtin SID: {e}")
                         return None
             
             # 3. Call SamrOpenDomain to get the domain handle
-            samrOpenDomainResponse = samr.hSamrOpenDomain(
+            openDomainResponse = samr.hSamrOpenDomain(
                 dce, 
                 serverHandle, 
                 domainId=domainSID
             )
-            domainHandle = samrOpenDomainResponse['DomainHandle']
+            domainHandle = openDomainResponse['DomainHandle']
             
-            # 4. Call SamrLookupNames to get the RID
-            samrLookupNamesResponse = samr.hSamrLookupNames(
+            # 4. Call SamrLookupNamesInDomain to get the RID
+            lookupNamesResponse = samr.hSamrLookupNamesInDomain(
                 dce, 
                 domainHandle, 
                 [self.username]
             )
             
             # Extract the RID from the response
-            rid = samrLookupNamesResponse['RelativeIds']['Element'][0]
+            rid = lookupNamesResponse['RelativeIds']['Element'][0]['Data']
             self.logger.debug(f"Direct RID query successful - User {self.username} has RID: {rid}")
             
             # 5. Clean up - close handles
