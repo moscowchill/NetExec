@@ -976,8 +976,8 @@ class smb(connection):
             if self.uac_restrictions_detected:
                 return highlight(f"({pwn3d_label} - {admin_type}: UAC restricted)")
             else:
-                # If we've confirmed we can perform admin operations without restriction
-                return highlight(f"({pwn3d_label} - {admin_type})")
+                # If we've confirmed we can perform admin operations without restriction (no UAC detected)
+                return highlight(f"({pwn3d_label} - {admin_type}: no UAC detected)")
         else:
             # Default case when we're not sure
             return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
