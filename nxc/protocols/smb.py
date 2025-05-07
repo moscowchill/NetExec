@@ -976,11 +976,21 @@ class smb(connection):
             if self.uac_restrictions_detected:
                 return highlight(f"({pwn3d_label} - {admin_type}: UAC restricted)")
             else:
-                # If we've confirmed we can perform admin operations without restriction (no UAC detected)
-                return highlight(f"({pwn3d_label} - {admin_type}: no UAC detected)")
+                # If we've confirmed admin operations aren't restricted
+                if not is_local_admin:
+                    # Domain admins aren't subject to UAC remote restrictions by default
+                    return highlight(f"({pwn3d_label} - {admin_type})")
+                else:
+                    # Local admins not showing restrictions may have UAC disabled
+                    return highlight(f"({pwn3d_label} - {admin_type}: UAC disabled)")
         else:
             # Default case when we're not sure
-            return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
+            if not is_local_admin:
+                # Domain admins aren't subject to UAC remote restrictions by default
+                return highlight(f"({pwn3d_label} - {admin_type})")
+            else:
+                # For local admins, we should warn about potential UAC
+                return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
