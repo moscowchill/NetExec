@@ -971,11 +971,16 @@ class smb(connection):
         # Check if we're RID 500 (built-in Administrator which bypasses UAC)
         if hasattr(self, 'is_rid500') and self.is_rid500:
             return highlight(f"({pwn3d_label} - RID 500 {admin_type})")
+        elif hasattr(self, 'uac_restrictions_detected'):
+            # We have definitive information about UAC status
+            if self.uac_restrictions_detected:
+                return highlight(f"({pwn3d_label} - {admin_type}: UAC restricted)")
+            else:
+                # If we've confirmed we can perform admin operations without restriction
+                return highlight(f"({pwn3d_label} - {admin_type})")
         else:
-            # Check if we have direct evidence of UAC restrictions
-            # We track access failures during RID checks that indicate UAC is definitely active
-            uac_status = "UAC restricted" if hasattr(self, 'uac_restrictions_detected') and self.uac_restrictions_detected else "UAC may apply"
-            return highlight(f"({pwn3d_label} - {admin_type}: {uac_status})")
+            # Default case when we're not sure
+            return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
