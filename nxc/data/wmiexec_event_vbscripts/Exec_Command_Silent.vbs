@@ -26,7 +26,7 @@ Set trigger = triggers.Create(7)
 Dim Action
 Set Action = taskDefinition.Actions.Create(ActionTypeExec)
 Action.Path = "c:\windows\system32\cmd.exe"
-Action.arguments = "/Q /c " & command
+Action.arguments = "/q /c " & command
 Dim objNet, LoginUser
 Set objNet = CreateObject("WScript.Network")
 LoginUser = objNet.UserName

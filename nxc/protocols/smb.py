@@ -1168,7 +1168,9 @@ class smb(connection):
                         self.args.share,
                         self.port,
                         self.logger,
-                        self.args.get_output_tries
+                        self.args.get_output_tries,
+                        nobfs=self.args.nobfs,
+                        no_delays=self.args.no_delays
                     )
                     self.logger.info("Execution method smbexec initialized successfully")
                     break

@@ -54,7 +54,7 @@ If Err.Number <> 0 Then
         Dim Action
         Set Action = taskDefinition.Actions.Create(ActionTypeExec)
         Action.Path = "c:\windows\system32\cmd.exe"
-        Action.arguments = "/Q /c " & command & " 1> " & outputPath & " 2>&1"
+        Action.arguments = "/q /c " & command & " 1> " & outputPath & " 2>&1"
         Dim objNet, LoginUser
         Set objNet = CreateObject("WScript.Network")
         LoginUser = objNet.UserName
