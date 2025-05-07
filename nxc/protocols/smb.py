@@ -22,7 +22,7 @@ from impacket.examples.regsecrets import (
     LSASecrets as RegSecretsLSASecrets
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
-from impacket.dcerpc.v5 import transport, lsat, lsad, scmr, rrp, srvs, wkst
+from impacket.dcerpc.v5 import transport, lsat, lsad, scmr, rrp, srvs, wkst, samr
 from impacket.dcerpc.v5.rpcrt import DCERPCException
 from impacket.dcerpc.v5.transport import DCERPCTransportFactory, SMBTransport
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
@@ -709,13 +709,14 @@ class smb(connection):
         
         # Initialize additional UAC tracking attribute
         self.is_rid500 = False
+        self.uac_restrictions_detected = False
         
         # Skip admin checks for Unix systems
         if "Unix" in self.server_os:
             self.logger.debug("Unix system detected, admin check skipped")
             self.admin_privs = False
             return
-            
+        
         # Method 1: Check access to admin$ share
         try:
             self.logger.debug("Checking admin rights via admin$ share access...")
@@ -724,6 +725,7 @@ class smb(connection):
             self.admin_privs = True
             # Still need to determine if RID 500
             self.check_rid500()
+            self.logger.debug(f"Admin check complete - is_rid500: {self.is_rid500}, uac_restricted: {self.uac_restrictions_detected}")
             return
         except Exception as e:
             self.logger.debug(f"Failed to connect to admin$ share: {e!s}")
@@ -737,6 +739,7 @@ class smb(connection):
             self.admin_privs = True
             # Still need to determine if RID 500
             self.check_rid500()
+            self.logger.debug(f"Admin check complete - is_rid500: {self.is_rid500}, uac_restricted: {self.uac_restrictions_detected}")
             return
         except Exception as e:
             self.logger.debug(f"Failed to access System32: {e!s}")
@@ -822,6 +825,7 @@ class smb(connection):
                 self.admin_privs = True
                 # Still need to determine if RID 500
                 self.check_rid500()
+                self.logger.debug(f"Admin check complete - is_rid500: {self.is_rid500}, uac_restricted: {self.uac_restrictions_detected}")
             else:
                 self.logger.debug("User does not appear to have admin privileges based on SCM tests")
                 self.admin_privs = False
@@ -845,6 +849,7 @@ class smb(connection):
                 self.admin_privs = True
                 # Still need to determine if RID 500
                 self.check_rid500()
+                self.logger.debug(f"Admin check complete - is_rid500: {self.is_rid500}, uac_restricted: {self.uac_restrictions_detected}")
             except Exception as e:
                 self.logger.debug(f"Failed write access test: {e!s}")
                 self.admin_privs = False
@@ -854,13 +859,35 @@ class smb(connection):
         Determine if the current user is the built-in Administrator (RID 500)
         which bypasses UAC by default.
         
-        This method tries several approaches to determine if the user is RID 500:
-        1. Look at username (weak indicator)
-        2. Examine if we got auto-elevated privileges
+        This method first tries a direct RID query via SAMR protocol.
+        If that fails, it falls back to heuristic checks.
         """
         self.is_rid500 = False
+        # Initialize flag to track evidence of UAC restrictions
+        self.uac_restrictions_detected = False
         
-        # First, check the most basic indicators
+        # Try direct RID query first - most reliable method
+        try:
+            rid = self.direct_get_user_rid()
+            if rid is not None:
+                # If we got the RID successfully, check if it's 500
+                if rid == 500:
+                    self.is_rid500 = True
+                    self.logger.debug("User confirmed as RID 500 (built-in Administrator) via direct RID query")
+                    return
+                else:
+                    self.logger.debug(f"User confirmed not RID 500 (has RID {rid}) via direct RID query")
+                    return
+        except Exception as e:
+            self.logger.debug(f"Direct RID query method failed, falling back to heuristics: {e}")
+            # Check for access denied or similar errors that indicate UAC restrictions
+            if any(err_type in str(e).lower() for err_type in ["access_denied", "object_name_not_found", "rpc_s_access_denied"]):
+                self.uac_restrictions_detected = True
+                self.logger.debug("UAC restriction evidence detected during RID query")
+        
+        self.logger.debug("Using heuristic checks to determine if user is RID 500")
+        
+        # Fallback to heuristic checks
         try:
             # Simple check: If the username is literally "Administrator", it's likely RID 500
             # This is not reliable but a good first indicator for local accounts
@@ -872,9 +899,7 @@ class smb(connection):
             # If we got seamless admin access to C$ and admin$ without UAC prompts,
             # that's a good indicator we're either RID 500 or have UAC disabled
             if self.admin_privs and not self.args.kerberos:
-                self.logger.debug("User has admin privileges without using Kerberos - likely RID 500 or UAC disabled")
-                # We got admin access without Kerberos authentication 
-                # (which would bypass the UAC restrictions)
+                self.logger.debug("User has admin privileges without using Kerberos - checking service creation rights")
                 
                 # Check if we can create a service - only built-in admin should be able to do this without UAC prompts
                 try:
@@ -911,9 +936,14 @@ class smb(connection):
                 except Exception as e:
                     self.logger.debug(f"Service creation test failed, likely subject to UAC: {e}")
                     # This user can't create services - likely a standard admin account subject to UAC
+                    
+                    # Check for specific errors that confirm UAC restrictions
+                    if any(err_type in str(e).lower() for err_type in ["access_denied", "object_name_not_found"]):
+                        self.uac_restrictions_detected = True
+                        self.logger.debug("UAC restriction evidence detected during service creation test")
 
         except Exception as e:
-            self.logger.debug(f"Error during RID 500 check: {e}")
+            self.logger.debug(f"Error during RID 500 heuristic checks: {e}")
             # Default to False if we couldn't determine
             self.is_rid500 = False
     
@@ -942,7 +972,10 @@ class smb(connection):
         if hasattr(self, 'is_rid500') and self.is_rid500:
             return highlight(f"({pwn3d_label} - RID 500 {admin_type})")
         else:
-            return highlight(f"({pwn3d_label} - {admin_type}: UAC may apply)")
+            # Check if we have direct evidence of UAC restrictions
+            # We track access failures during RID checks that indicate UAC is definitely active
+            uac_status = "UAC restricted" if hasattr(self, 'uac_restrictions_detected') and self.uac_restrictions_detected else "UAC may apply"
+            return highlight(f"({pwn3d_label} - {admin_type}: {uac_status})")
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
@@ -2325,3 +2358,107 @@ class smb(connection):
 
     def mark_guest(self):
         return highlight(f"{highlight('(Guest)')}" if self.is_guest else "")
+
+    def direct_get_user_rid(self):
+        """
+        Query the user's RID directly using SAMR protocol.
+        This is a more reliable method than heuristic checks to determine
+        if the user is the built-in Administrator (RID 500).
+        
+        Returns:
+            int: The user's RID if successful, None if failed
+        """
+        self.logger.debug("Attempting direct RID query via SAMR protocol")
+        try:
+            # Set up the RPC transport for SAMR
+            stringBinding = f"ncacn_np:{self.host}[\\pipe\\samr]"
+            rpctransport = transport.DCERPCTransportFactory(stringBinding)
+            if hasattr(rpctransport, "set_credentials"):
+                rpctransport.set_credentials(
+                    self.username, 
+                    self.password,
+                    self.domain,
+                    self.lmhash,
+                    self.nthash,
+                    self.aesKey
+                )
+                if self.kerberos:
+                    rpctransport.set_kerberos(self.kerberos, self.kdcHost)
+                
+            dce = rpctransport.get_dce_rpc()
+            dce.connect()
+            
+            # Bind to the SAMR interface
+            dce.bind(samr.MSRPC_UUID_SAMR)
+            
+            # 1. Call SamrConnect to get the server handle
+            samrConnectResponse = samr.hSamrConnect(dce)
+            serverHandle = samrConnectResponse['ServerHandle']
+            
+            # 2. Call SamrLookupDomain to get the domain SID
+            try:
+                # First try with the provided domain name
+                sid_lookup_domain = self.domain
+                if sid_lookup_domain.lower() == self.hostname.lower():
+                    # For local accounts, use "Builtin" domain
+                    sid_lookup_domain = "Builtin"
+                    
+                samrLookupDomainResponse = samr.hSamrLookupDomain(
+                    dce, 
+                    serverHandle, 
+                    sid_lookup_domain
+                )
+                domainSID = samrLookupDomainResponse['DomainId']
+            except DCERPCException as e:
+                self.logger.debug(f"Error looking up domain SID for {self.domain}: {e}")
+                # If lookup with domain fails, try with hostname for local accounts
+                try:
+                    samrLookupDomainResponse = samr.hSamrLookupDomain(
+                        dce, 
+                        serverHandle, 
+                        self.hostname
+                    )
+                    domainSID = samrLookupDomainResponse['DomainId']
+                except DCERPCException as e:
+                    self.logger.debug(f"Error looking up hostname SID for {self.hostname}: {e}")
+                    # Last resort - try builtin domain
+                    try:
+                        samrLookupDomainResponse = samr.hSamrLookupDomain(
+                            dce, 
+                            serverHandle, 
+                            "Builtin"
+                        )
+                        domainSID = samrLookupDomainResponse['DomainId']
+                    except DCERPCException as e:
+                        self.logger.debug(f"Error looking up Builtin SID: {e}")
+                        return None
+            
+            # 3. Call SamrOpenDomain to get the domain handle
+            samrOpenDomainResponse = samr.hSamrOpenDomain(
+                dce, 
+                serverHandle, 
+                domainId=domainSID
+            )
+            domainHandle = samrOpenDomainResponse['DomainHandle']
+            
+            # 4. Call SamrLookupNames to get the RID
+            samrLookupNamesResponse = samr.hSamrLookupNames(
+                dce, 
+                domainHandle, 
+                [self.username]
+            )
+            
+            # Extract the RID from the response
+            rid = samrLookupNamesResponse['RelativeIds']['Element'][0]
+            self.logger.debug(f"Direct RID query successful - User {self.username} has RID: {rid}")
+            
+            # 5. Clean up - close handles
+            samr.hSamrCloseHandle(dce, domainHandle)
+            samr.hSamrCloseHandle(dce, serverHandle)
+            dce.disconnect()
+            
+            return rid
+            
+        except Exception as e:
+            self.logger.debug(f"Direct RID query failed: {e}")
+            return None
