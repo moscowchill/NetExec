@@ -832,7 +832,7 @@ class ldap(connection):
         resolv = resolver.Resolver(configure=False)
         resolv.nameservers = [self.args.dns_server] if self.args.dns_server else [self.host]
         self.logger.debug(f"DNS Server option: {self.args.dns_server}, using DNS server: {resolv.nameservers}")
-        resolv.timeout = self.args.dns_timeout
+        resolv.timeout = 1 if self.args.no_delays else self.args.dns_timeout
 
         def resolve_and_display_hostname(name, domain_name=None):
             prefix = f"[{domain_name}] " if domain_name else ""
@@ -1615,7 +1615,7 @@ class ldap(connection):
             domain=self.domain,
             nameserver=self.args.dns_server,
             dns_tcp=self.args.dns_tcp,
-            dns_timeout=self.args.dns_timeout,
+            dns_timeout=1 if self.args.no_delays else self.args.dns_timeout,
         )
         collect = resolve_collection_methods("Default" if not self.args.collection else self.args.collection)
         if not collect:

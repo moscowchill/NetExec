@@ -194,12 +194,17 @@ class connection:
 
     def resolver(self, target):
         try:
+            # Use much shorter timeout when no delays are requested
+            dns_timeout = 1 if self.args.no_delays else self.args.dns_timeout
+            # Force use of DNS resolver with timeout when no delays are requested (to avoid slow getaddrinfo)
+            dns_server = self.args.dns_server or ("8.8.8.8" if self.args.no_delays else None)
+            self.logger.debug(f"DNS resolution: target={target}, dns_server={dns_server}, timeout={dns_timeout}, no_delays={self.args.no_delays}")
             return get_host_addr_info(
                 target=target,
                 force_ipv6=self.args.force_ipv6,
-                dns_server=self.args.dns_server,
+                dns_server=dns_server,
                 dns_tcp=self.args.dns_tcp,
-                dns_timeout=self.args.dns_timeout
+                dns_timeout=dns_timeout
             )
         except Exception as e:
             self.logger.info(f"Error resolving hostname {target}: {e}")

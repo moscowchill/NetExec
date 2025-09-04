@@ -180,24 +180,28 @@ class smb(connection):
         self.is_host_dc()
 
         try:
-            self.logger.display("Retrieving host information...")
-            random_username = random.choice(PLAUSIBLE_USERNAMES)
-            self.logger.debug(f"Attempting {random_username} login to {self.hostname} for enumeration")
-            self.conn.login(random_username, "", self.hostname)
+            if self.args.no_delays:
+                # Use simple empty credential login when no delays are requested (faster)
+                self.conn.login("", "")
+            else:
+                self.logger.display("Retrieving host information...")
+                random_username = random.choice(PLAUSIBLE_USERNAMES)
+                self.logger.debug(f"Attempting {random_username} login to {self.hostname} for enumeration")
+                self.conn.login(random_username, "", self.hostname)
             self.null_auth = True
         except BrokenPipeError:
-            self.logger.fail("Broken Pipe Error while attempting initial plausible login")
+            self.logger.fail("Broken Pipe Error while attempting initial login")
         except SessionError as e:
             # Handle potential login failure (e.g., Guest disabled)
             error, desc = e.getErrorString()
-            self.logger.debug(f"Initial {random_username} login failed: {error} {desc}")
+            self.logger.debug(f"Initial login attempt failed: {error} {desc}")
             self.null_auth = False
             if "STATUS_NOT_SUPPORTED" in str(e): # Check if NTLM itself is disabled
                 self.no_ntlm = True
                 self.logger.debug("NTLM not supported (detected during login attempt)")
         except Exception as e:
             # Catch other potential errors
-            self.logger.debug(f"Unexpected error during initial {random_username} login: {e}")
+            self.logger.debug(f"Unexpected error during initial login: {e}")
             self.null_auth = False
             if "STATUS_NOT_SUPPORTED" in str(e):
                 self.no_ntlm = True
