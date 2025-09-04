@@ -35,7 +35,12 @@ This fork includes additional stealth and evasion enhancements for penetration t
 
 ### 🎭 Command Obfuscation
 - **`--nobfs` flag** - Disable command obfuscation for compatibility
-- **Enhanced SMBEXEC** with configurable obfuscation settings
+- **Enhanced SMBEXEC** with multiple obfuscation techniques:
+  - **Case randomization** - Commands use randomized upper/lowercase (`eCHo`, `MoVe`, `ComSpEc`)
+  - **Environment variable obfuscation** - `%COMSPEC%` → `%cOmSpEc%`, `%LOCALAPPDATA%` → `%lOcAlApPdAtA%`
+  - **Command flag randomization** - `/Q` → `/q`, `/C` → `/c` with random casing
+  - **File operation masking** - Uses `move /y file NUL` instead of obvious `del` commands
+  - **Batch file cleanup** - Automatic removal of temporary execution files
 - **Plausible service names** for command execution (WinDriverSync, ChromeUpdate, etc.)
 - **Tactical delays** with visual countdown timers for stealth operations
 
@@ -54,21 +59,30 @@ This fork includes additional stealth and evasion enhancements for penetration t
 ## Usage Examples
 
 ```bash
-# Stealth mode with plausible usernames and delays
+# Default stealth mode - plausible usernames + full obfuscation
 netexec smb 192.168.1.0/24 -u admin -p password
 
-# Speed mode - bypass all delays and stealth features
+# Speed mode - fast enumeration but still obfuscated commands  
 netexec smb 192.168.1.0/24 -u admin -p password --no-delays
 
-# Disable command obfuscation for compatibility
-netexec smb 192.168.1.1 -u admin -p password --nobfs
+# Maximum speed - bypass delays and obfuscation
+netexec smb 192.168.1.0/24 -u admin -p password --no-delays --nobfs
+
+# Command execution with obfuscation
+netexec smb 192.168.1.1 -u admin -p password -x whoami
+# Creates: %cOmSpEc% /q /c eCHo whoami > %lOcAlApPdAtA%\WinDriverSync_20250904.bat
+
+# Plain command execution (compatibility mode)
+netexec smb 192.168.1.1 -u admin -p password -x whoami --nobfs  
+# Creates: cmd.exe /q /c echo whoami > %LOCALAPPDATA%\WinDriverSync_20250904.bat
 ```
 
 ## Performance Comparison
 
-| Mode | Host Enumeration | DNS Resolution | Command Execution |
-|------|------------------|----------------|-------------------|
-| **Default (Stealth)** | Plausible usernames (3-6s) | Standard timeout (3s) | Obfuscated commands |
-| **`--no-delays`** | Empty credentials (<1s) | Fast DNS (1s) | Direct execution |
+| Mode | Host Enumeration | DNS Resolution | Command Execution | Service Names |
+|------|------------------|----------------|-------------------|---------------|
+| **Default (Stealth)** | Plausible usernames (3-6s) | Standard timeout (3s) | Obfuscated (`eCHo`, `%cOmSpEc%`) | Randomized (WinDriverSync_20250904) |
+| **`--no-delays`** | Empty credentials (<1s) | Fast DNS (1s) | Obfuscated (unless `--nobfs`) | Randomized |
+| **`--nobfs`** | Based on delay setting | Based on delay setting | Plain commands (`echo`, `cmd.exe`) | Randomized |
 
 ---
