@@ -315,7 +315,8 @@ class smb(connection):
         self.remoteName = self.host if not self.kerberos else f"{self.hostname}.{self.targetDomain}"
 
         # using kdcHost is buggy on impacket when using trust relation between ad so we kdcHost must stay to none if targetdomain is not equal to domain
-        if not self.kdcHost and self.domain and self.domain == self.targetDomain:
+        # Skip KDC resolution when using local authentication since we're not doing Kerberos
+        if not self.kdcHost and self.domain and self.domain == self.targetDomain and not getattr(self.args, 'local_auth', False):
             result = self.resolver(self.domain)
             self.kdcHost = result["host"] if result else None
             self.logger.info(f"Resolved domain: {self.domain} with dns, kdcHost: {self.kdcHost}")

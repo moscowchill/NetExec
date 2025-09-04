@@ -28,10 +28,10 @@ This fork includes additional stealth and evasion enhancements for penetration t
 
 ### ⚡ Enhanced Speed Controls
 - **`--no-delays` flag** - Skip all tactical delays for maximum speed
-  - Instant DNS resolution with 1-second timeout
   - Direct empty credential authentication
   - Bypasses connection delays and obfuscation
-- **Optimized DNS handling** - Uses fast public DNS (8.8.8.8) automatically with `--no-delays`
+  - No tactical delay countdowns
+- **Optimized DNS handling** - `--local-auth` skips unnecessary KDC discovery DNS lookups
 
 ### 🎭 Command Obfuscation
 - **`--nobfs` flag** - Disable command obfuscation for compatibility
@@ -81,8 +81,9 @@ netexec smb 192.168.1.1 -u admin -p password -x whoami --nobfs
 
 | Mode | Host Enumeration | DNS Resolution | Command Execution | Service Names |
 |------|------------------|----------------|-------------------|---------------|
-| **Default (Stealth)** | Plausible usernames (3-6s) | Standard timeout (3s) | Obfuscated (`eCHo`, `%cOmSpEc%`) | Randomized (WinDriverSync_20250904) |
-| **`--no-delays`** | Empty credentials (<1s) | Fast DNS (1s) | Obfuscated (unless `--nobfs`) | Randomized |
-| **`--nobfs`** | Based on delay setting | Based on delay setting | Plain commands (`echo`, `cmd.exe`) | Randomized |
+| **Default (Stealth)** | Plausible usernames (3-6s) | KDC discovery (domain mode) | Obfuscated (`eCHo`, `%cOmSpEc%`) | Randomized (WinDriverSync_20250904) |
+| **`--local-auth`** | Plausible usernames (3-6s) | Skipped (local mode) | Obfuscated | Randomized |
+| **`--no-delays`** | Empty credentials (<1s) | Based on auth mode | Obfuscated (unless `--nobfs`) | Randomized |
+| **`--local-auth --no-delays`** | Empty credentials (<1s) | Skipped | Obfuscated (unless `--nobfs`) | Randomized |
 
 ---
