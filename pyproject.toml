@@ -54,10 +54,10 @@ homepage = "https://github.com/Pennyw0rth/NetExec"
 repository = "https://github.com/Pennyw0rth/NetExec"
 
 [project.scripts]
-nxc = "nxc.netexec:main"
-netexec = "nxc.netexec:main"
-NetExec = "nxc.netexec:main"
-nxcdb = "nxc.nxcdb:main"
+nxc2 = "nxc.netexec:main"
+netexec2 = "nxc.netexec:main"
+NetExec2 = "nxc.netexec:main"
+nxcdb2 = "nxc.nxcdb:main"
 
 [tool.poetry]
 exclude = []
