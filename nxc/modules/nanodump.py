@@ -97,13 +97,18 @@ class NXCModule:
                     self.context.log.success(f"Created file {self.nano} on the \\\\{self.share}{self.tmp_share}")
                 except Exception as e:
                     # Check if file was actually uploaded despite timeout
+                    self.context.log.display(f"Upload timeout occurred, checking if file exists: {e}")
                     try:
-                        import tempfile
-                        with tempfile.NamedTemporaryFile() as tmp:
-                            self.connection.conn.getFile(self.share, self.tmp_share + self.nano, tmp.write)
-                        self.context.log.success(f"Created file {self.nano} on the \\\\{self.share}{self.tmp_share} (timeout during upload but file exists)")
-                    except:
-                        self.context.log.fail(f"Error writing file to share {self.share}: {e}")
+                        # Try to list the file to see if it exists
+                        files = self.connection.conn.listPath(self.share, self.tmp_share)
+                        file_exists = any(f.filename == self.nano for f in files)
+                        if file_exists:
+                            self.context.log.success(f"Created file {self.nano} on the \\\\{self.share}{self.tmp_share} (recovered from timeout)")
+                        else:
+                            self.context.log.fail(f"File upload failed - file does not exist: {e}")
+                            return
+                    except Exception as list_error:
+                        self.context.log.fail(f"Cannot verify file upload and cannot list directory: {e}")
                         return
         else:
             with open(os.path.join(self.nano_path, self.nano), "rb") as nano:
