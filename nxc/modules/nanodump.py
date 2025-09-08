@@ -7,9 +7,10 @@ import base64
 import sys
 from pypykatz.pypykatz import pypykatz
 import tempfile
+import random
 from datetime import datetime
 from nxc.helpers.bloodhound import add_user_bh
-from nxc.helpers.misc import CATEGORY
+from nxc.helpers.misc import CATEGORY, PLAUSIBLE_SERVICE_NAMES
 from nxc.protocols.mssql.mssqlexec import MSSQLEXEC
 
 
