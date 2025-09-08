@@ -3,9 +3,8 @@ import binascii
 import os
 import re
 import random
-import time
 import sys
-from time import sleep
+from time import sleep, time, ctime
 import struct
 import ipaddress
 from Cryptodome.Hash import MD4
@@ -69,7 +68,6 @@ from dploot.triage.credentials import CredentialsTriage
 from dploot.lib.target import Target
 from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
-from time import time, ctime
 from traceback import format_exc
 from termcolor import colored
 import contextlib
@@ -710,7 +708,7 @@ class smb(connection):
         # Method 2: Attempt a privileged file operation
         try:
             self.logger.debug("Checking admin rights via SYSTEM32 access...")
-            tid = self.conn.connectTree("C$")
+            self.conn.connectTree("C$")
             self.conn.listPath("C$", "Windows\\System32")
             self.logger.debug("Successfully listed System32 directory - user likely has admin rights")
             self.admin_privs = True
@@ -740,8 +738,6 @@ class smb(connection):
             except Exception as e:
                 self.logger.debug(f"DCE bind failed: {e!s}")
                 self.admin_privs = False
-                # We might still want to proceed, but log that bind failed
-                # return # Optional: exit if bind fails
 
             # Try with multiple different access levels, starting with the lowest
             access_tests = [
@@ -817,7 +813,7 @@ class smb(connection):
         if not self.admin_privs:
             try:
                 self.logger.debug("Trying write access test to C$ as final check...")
-                tid = self.conn.connectTree("C$")
+                self.conn.connectTree("C$")
                 test_dir = f"Windows\\Temp\\nxc_test_{random.randint(10000, 99999)}"
                 self.conn.createDirectory("C$", test_dir)
                 self.logger.debug(f"Successfully created test directory in C$\\{test_dir} - user has admin rights")
@@ -835,7 +831,7 @@ class smb(connection):
         """
         Determine if the current user is the built-in Administrator (RID 500)
         which bypasses UAC by default.
-        
+
         This method first tries a direct RID query via SAMR protocol.
         If that fails, it falls back to heuristic checks.
         """
@@ -926,7 +922,7 @@ class smb(connection):
 
     def mark_pwned(self):
         """
-        Enhanced mark_pwned to include UAC bypass availability and distinguish between 
+        Enhanced mark_pwned to include UAC bypass availability and distinguish between
         domain and local administrators
         """
         if not self.admin_privs:
@@ -935,7 +931,7 @@ class smb(connection):
         # Get the configured pwn3d label from config using the standard pattern
         try:
             pwn3d_label = self.config.get("nxc", "pwn3d_label")
-        except:
+        except Exception:
             # Fallback to default if config access fails
             pwn3d_label = "Admin!"
 
@@ -2676,7 +2672,7 @@ class smb(connection):
         Query the user's RID directly using SAMR protocol.
         This is a more reliable method than heuristic checks to determine
         if the user is the built-in Administrator (RID 500).
-        
+
         Returns:
             int: The user's RID if successful, None if failed
         """
