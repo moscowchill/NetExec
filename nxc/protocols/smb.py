@@ -69,8 +69,7 @@ from dploot.triage.credentials import CredentialsTriage
 from dploot.lib.target import Target
 from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
-from datetime import datetime
-from time import time, ctime, sleep
+from time import time, ctime
 from traceback import format_exc
 from termcolor import colored
 import contextlib
@@ -196,7 +195,7 @@ class smb(connection):
             error, desc = e.getErrorString()
             self.logger.debug(f"Initial login attempt failed: {error} {desc}")
             self.null_auth = False
-            if "STATUS_NOT_SUPPORTED" in str(e): # Check if NTLM itself is disabled
+            if "STATUS_NOT_SUPPORTED" in str(e):  # Check if NTLM itself is disabled
                 self.no_ntlm = True
                 self.logger.debug("NTLM not supported (detected during login attempt)")
         except Exception as e:
@@ -316,7 +315,7 @@ class smb(connection):
 
         # using kdcHost is buggy on impacket when using trust relation between ad so we kdcHost must stay to none if targetdomain is not equal to domain
         # Skip KDC resolution when using local authentication since we're not doing Kerberos
-        if not self.kdcHost and self.domain and self.domain == self.targetDomain and not getattr(self.args, 'local_auth', False):
+        if not self.kdcHost and self.domain and self.domain == self.targetDomain and not getattr(self.args, "local_auth", False):
             result = self.resolver(self.domain)
             self.kdcHost = result["host"] if result else None
             self.logger.info(f"Resolved domain: {self.domain} with dns, kdcHost: {self.kdcHost}")
@@ -402,13 +401,13 @@ class smb(connection):
                 self.logger.debug(f"Got TGS for {self.args.delegate} through S4U")
 
             self.conn.kerberosLogin(self.username, password, domain, lmhash, nthash, aesKey, kdcHost, useCache=useCache, TGS=tgs)
-            
+
             # Only run admin check on Windows (Unix has different admin privileges model)
             if "Unix" not in self.server_os:
                 self.check_if_admin()
                 self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
             else:
-                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.logger.debug("Unix system detected, skipping Windows admin privilege check")
                 self.admin_privs = False
 
             if username == "":
@@ -477,13 +476,13 @@ class smb(connection):
             self.logger.debug(f"Logged in with password to SMB with {domain}/{self.username}")
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
-            
+
             # Only run admin check on Windows (Unix has different admin privileges model)
             if "Unix" not in self.server_os:
                 self.check_if_admin()
                 self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
             else:
-                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.logger.debug("Unix system detected, skipping Windows admin privilege check")
                 self.admin_privs = False
 
             self.logger.debug(f"Adding credential: {domain}/{self.username}:{self.password}")
@@ -501,7 +500,7 @@ class smb(connection):
             self.logger.debug(f"Host ID obtained: {host_id}")
             self.logger.debug(f"Attempting to add loggedin relation: user={user_id}, host={host_id}")
             self.db.add_loggedin_relation(user_id, host_id)
-            self.logger.debug(f"Loggedin relation added")
+            self.logger.debug("Loggedin relation added")
 
             out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_pwned()}"
             self.logger.success(out)
@@ -564,13 +563,13 @@ class smb(connection):
             self.logger.debug(f"Logged in with hash to SMB with {domain}/{self.username}")
             self.is_guest = bool(self.conn.isGuestSession())
             self.logger.debug(f"{self.is_guest=}")
-            
+
             # Only run admin check on Windows (Unix has different admin privileges model)
             if "Unix" not in self.server_os:
                 self.check_if_admin()
                 self.logger.debug(f"Admin privileges: {self.admin_privs}, RID 500: {getattr(self, 'is_rid500', False)}")
             else:
-                self.logger.debug(f"Unix system detected, skipping Windows admin privilege check")
+                self.logger.debug("Unix system detected, skipping Windows admin privilege check")
                 self.admin_privs = False
 
             self.db.add_credential("hash", domain, self.username, self.hash)
@@ -611,14 +610,14 @@ class smb(connection):
             return False
 
     def create_smbv1_conn(self, check=False):
-        sys.stdout.write(f"\r[+] SMBv1 falback for some reason \n")
+        sys.stdout.write("\r[+] SMBv1 falback for some reason \n")
         self.logger.info(f"Creating SMBv1 connection to {self.host}")
         try:
             conn = SMBConnection(
-                random.choice(PLAUSIBLE_CLIENT_NAMES), # Use a random plausible client name
+                random.choice(PLAUSIBLE_CLIENT_NAMES),  # Use a random plausible client name
                 self.remoteName,
                 self.host,
-                self.port, # Port (positional)
+                self.port,  # Port (positional)
                 preferredDialect=SMB_DIALECT,
                 timeout=self.args.smb_timeout,
             )
@@ -646,10 +645,10 @@ class smb(connection):
         self.logger.info(f"Creating SMBv3 connection to {self.host}")
         try:
             self.conn = SMBConnection(
-                random.choice(PLAUSIBLE_CLIENT_NAMES), # Use a random plausible client name
+                random.choice(PLAUSIBLE_CLIENT_NAMES),  # Use a random plausible client name
                 self.remoteName,
                 self.host,
-                self.port, # Port (positional)
+                self.port,  # Port (positional)
                 timeout=self.args.smb_timeout,
             )
             self.smbv3 = True
@@ -684,17 +683,17 @@ class smb(connection):
 
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
-        
+
         # Initialize additional UAC tracking attribute
         self.is_rid500 = False
         self.uac_restrictions_detected = False
-        
+
         # Skip admin checks for Unix systems
         if "Unix" in self.server_os:
             self.logger.debug("Unix system detected, admin check skipped")
             self.admin_privs = False
             return
-        
+
         # Method 1: Check access to admin$ share
         try:
             self.logger.debug("Checking admin rights via admin$ share access...")
@@ -707,7 +706,7 @@ class smb(connection):
             return
         except Exception as e:
             self.logger.debug(f"Failed to connect to admin$ share: {e!s}")
-        
+
         # Method 2: Attempt a privileged file operation
         try:
             self.logger.debug("Checking admin rights via SYSTEM32 access...")
@@ -721,7 +720,7 @@ class smb(connection):
             return
         except Exception as e:
             self.logger.debug(f"Failed to access System32: {e!s}")
-        
+
         # Method 3: Try with SCMR if the previous methods failed
         rpctransport = SMBTransport(self.conn.getRemoteHost(), 445, r"\svcctl", smb_connection=self.conn)
         dce = rpctransport.get_dce_rpc()
@@ -755,7 +754,7 @@ class smb(connection):
                 (0x00020001, "SC_MANAGER_ENUMERATE_SERVICE | SC_MANAGER_CONNECT", "UAC-compatible check"),
                 (0x000F003F, "SC_MANAGER_ALL_ACCESS", "Full access check")
             ]
-            
+
             success = False
             for access_bit, name, desc in access_tests:
                 try:
@@ -763,7 +762,7 @@ class smb(connection):
                     scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", access_bit)
                     self.logger.debug(f"SCManager open with {name} successful!")
                     success = True
-                    
+
                     # If we got basic access, try to enumerate services as an additional check
                     if access_bit & 0x00000004:  # Has enumerate permission
                         try:
@@ -772,32 +771,32 @@ class smb(connection):
                             self.logger.debug("Service enumeration successful!")
                         except Exception as e:
                             self.logger.debug(f"Service enumeration failed: {e!s}")
-                    
+
                     # If we can create services, that's definitive proof of admin
                     if access_bit & 0x00000002 and success:  # Has create service permission
                         try:
                             self.logger.debug("Attempting service creation test...")
                             service_name = f"NXCTempSvc{random.randint(10000, 99999)}\x00"
-                            resp = scmr.hRCreateServiceW(dce, 
-                                                      scmrobj['lpScHandle'], 
-                                                      service_name, 
-                                                      service_name, 
-                                                      lpBinaryPathName=f"C:\\Windows\\System32\\cmd.exe\x00")
-                            
-                            service_handle = resp['lpServiceHandle']
+                            resp = scmr.hRCreateServiceW(dce,
+                                                      scmrobj["lpScHandle"],
+                                                      service_name,
+                                                      service_name,
+                                                      lpBinaryPathName="C:\\Windows\\System32\\cmd.exe\x00")
+
+                            service_handle = resp["lpServiceHandle"]
                             scmr.hRDeleteService(dce, service_handle)
                             scmr.hRCloseServiceHandle(dce, service_handle)
                             self.logger.debug("Successfully created and deleted test service!")
                         except Exception as e:
                             self.logger.debug(f"Service creation test failed: {e!s}")
-                    
+
                     break  # No need to try higher access levels if this one worked
-                
+
                 except scmr.DCERPCException as e:
                     self.logger.debug(f"SCManager open with {name} failed: {e!s}")
                 except Exception as e:
                     self.logger.debug(f"Unexpected error testing {name}: {e!s}")
-            
+
             if success:
                 self.logger.debug("User appears to have admin privileges based on SCM access")
                 self.admin_privs = True
@@ -807,13 +806,13 @@ class smb(connection):
             else:
                 self.logger.debug("User does not appear to have admin privileges based on SCM tests")
                 self.admin_privs = False
-                
+
             try:
                 dce.disconnect()
                 self.logger.debug("DCE disconnected")
             except Exception as e:
                 self.logger.debug(f"Error during DCE disconnect: {e!s}")
-                
+
         # Method 4: Check if user can write to C$ in a non-standard location
         if not self.admin_privs:
             try:
@@ -831,7 +830,7 @@ class smb(connection):
             except Exception as e:
                 self.logger.debug(f"Failed write access test: {e!s}")
                 self.admin_privs = False
-    
+
     def check_rid500(self):
         """
         Determine if the current user is the built-in Administrator (RID 500)
@@ -843,7 +842,7 @@ class smb(connection):
         self.is_rid500 = False
         # Initialize flag to track evidence of UAC restrictions
         self.uac_restrictions_detected = False
-        
+
         # Try direct RID query first - most reliable method
         try:
             rid = self.direct_get_user_rid()
@@ -862,9 +861,9 @@ class smb(connection):
             if any(err_type in str(e).lower() for err_type in ["access_denied", "object_name_not_found", "rpc_s_access_denied"]):
                 self.uac_restrictions_detected = True
                 self.logger.debug("UAC restriction evidence detected during RID query")
-        
+
         self.logger.debug("Using heuristic checks to determine if user is RID 500")
-        
+
         # Fallback to heuristic checks
         try:
             # Simple check: If the username is literally "Administrator", it's likely RID 500
@@ -873,48 +872,48 @@ class smb(connection):
                 self.logger.debug("Username is 'Administrator' in local context - likely RID 500")
                 self.is_rid500 = True
                 return
-                
+
             # If we got seamless admin access to C$ and admin$ without UAC prompts,
             # that's a good indicator we're either RID 500 or have UAC disabled
             if self.admin_privs and not self.args.kerberos:
                 self.logger.debug("User has admin privileges without using Kerberos - checking service creation rights")
-                
+
                 # Check if we can create a service - only built-in admin should be able to do this without UAC prompts
                 try:
                     stringbinding = rf"ncacn_np:{self.host}[\\pipe\\svcctl]"
                     rpctransport = transport.DCERPCTransportFactory(stringbinding)
                     rpctransport.set_dport(445)
-                    
+
                     if hasattr(rpctransport, "set_credentials"):
                         rpctransport.set_credentials(
-                            self.username, 
+                            self.username,
                             self.password,
                             self.domain,
                             self.lmhash,
                             self.nthash,
                             self.aesKey
                         )
-                    
+
                     dce = rpctransport.get_dce_rpc()
                     dce.connect()
                     dce.bind(scmr.MSRPC_UUID_SCMR)
-                    
+
                     # Try to open with service creation access
-                    resp = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0x0002) # SC_MANAGER_CREATE_SERVICE
-                    scHandle = resp['lpScHandle']
-                    
+                    resp = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0x0002)  # SC_MANAGER_CREATE_SERVICE
+                    scHandle = resp["lpScHandle"]
+
                     # If we got here without error, we likely have RID 500 or UAC disabled
-                    self.is_rid500 = True 
+                    self.is_rid500 = True
                     self.logger.debug("User can create services without elevation - confirmed admin RID 500 or UAC disabled")
-                    
+
                     # Close handle
                     scmr.hRCloseServiceHandle(dce, scHandle)
                     dce.disconnect()
-                    
+
                 except Exception as e:
                     self.logger.debug(f"Service creation test failed, likely subject to UAC: {e}")
                     # This user can't create services - likely a standard admin account subject to UAC
-                    
+
                     # Check for specific errors that confirm UAC restrictions
                     if any(err_type in str(e).lower() for err_type in ["access_denied", "object_name_not_found"]):
                         self.uac_restrictions_detected = True
@@ -924,7 +923,7 @@ class smb(connection):
             self.logger.debug(f"Error during RID 500 heuristic checks: {e}")
             # Default to False if we couldn't determine
             self.is_rid500 = False
-    
+
     def mark_pwned(self):
         """
         Enhanced mark_pwned to include UAC bypass availability and distinguish between 
@@ -932,24 +931,24 @@ class smb(connection):
         """
         if not self.admin_privs:
             return ""
-            
+
         # Get the configured pwn3d label from config using the standard pattern
         try:
-            pwn3d_label = self.config.get('nxc', 'pwn3d_label')
+            pwn3d_label = self.config.get("nxc", "pwn3d_label")
         except:
             # Fallback to default if config access fails
             pwn3d_label = "Admin!"
-            
+
         # Determine if we're a local or domain admin
         # If local_auth flag is set or domain equals hostname, we're dealing with a local admin
         is_local_admin = self.args.local_auth or self.domain.lower() == self.hostname.lower()
-        
+
         admin_type = "Local Admin" if is_local_admin else "Domain Admin"
-        
+
         # Check if we're RID 500 (built-in Administrator which bypasses UAC)
-        if hasattr(self, 'is_rid500') and self.is_rid500:
+        if hasattr(self, "is_rid500") and self.is_rid500:
             return highlight(f"({pwn3d_label} - RID 500 {admin_type})")
-        elif hasattr(self, 'uac_restrictions_detected'):
+        elif hasattr(self, "uac_restrictions_detected"):
             # We have definitive information about UAC status
             if self.uac_restrictions_detected:
                 return highlight(f"({pwn3d_label} - {admin_type}: UAC restricted)")
@@ -1081,7 +1080,7 @@ class smb(connection):
         """
         # Add detailed logging of execution method selection
         self.logger.debug(f"Execute called with methods={methods}, exec_method={self.args.exec_method}, explicitly_set={getattr(self.args, 'exec_method_explicitly_set', False)}")
-        
+
         # Check if user explicitly set a method with --exec-method flag
         # But only use it exclusively if exec_method_explicitly_set is True
         if getattr(self.args, "exec_method_explicitly_set", False):
@@ -1104,12 +1103,12 @@ class smb(connection):
         self.logger.debug(f"Will try methods in this order: {methods}")
         current_method = ""
         attempted_methods = []
-        
+
         for method in methods:
             current_method = method
             attempted_methods.append(method)
             self.logger.debug(f"Attempting execution via {method}...")
-            
+
             if method == "wmiexec":
                 try:
                     exec_method = WMIEXEC(
@@ -1132,7 +1131,7 @@ class smb(connection):
                     self.logger.info("Execution method wmiexec initialized successfully")
                     break
                 except Exception as e:
-                    self.logger.debug(f"Error setting up wmiexec: {str(e)}")
+                    self.logger.debug(f"Error setting up wmiexec: {e!s}")
                     self.logger.debug("Error executing command via wmiexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -1161,7 +1160,7 @@ class smb(connection):
                     self.logger.info("Execution method mmcexec initialized successfully")
                     break
                 except Exception as e:
-                    self.logger.debug(f"Error setting up mmcexec: {str(e)}")
+                    self.logger.debug(f"Error setting up mmcexec: {e!s}")
                     self.logger.debug("Error executing command via mmcexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -1185,7 +1184,7 @@ class smb(connection):
                     self.logger.info("Execution method atexec initialized successfully")
                     break
                 except Exception as e:
-                    self.logger.debug(f"Error setting up atexec: {str(e)}")
+                    self.logger.debug(f"Error setting up atexec: {e!s}")
                     self.logger.debug("Error executing command via atexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -1213,7 +1212,7 @@ class smb(connection):
                     self.logger.info("Execution method smbexec initialized successfully")
                     break
                 except Exception as e:
-                    self.logger.debug(f"Error setting up smbexec: {str(e)}")
+                    self.logger.debug(f"Error setting up smbexec: {e!s}")
                     self.logger.debug("Error executing command via smbexec, traceback:")
                     self.logger.debug(format_exc())
                     continue
@@ -2688,7 +2687,7 @@ class smb(connection):
             rpctransport = transport.DCERPCTransportFactory(stringBinding)
             if hasattr(rpctransport, "set_credentials"):
                 rpctransport.set_credentials(
-                    self.username, 
+                    self.username,
                     self.password,
                     self.domain,
                     self.lmhash,
@@ -2697,17 +2696,17 @@ class smb(connection):
                 )
                 if self.kerberos:
                     rpctransport.set_kerberos(self.kerberos, self.kdcHost)
-                
+
             dce = rpctransport.get_dce_rpc()
             dce.connect()
-            
+
             # Bind to the SAMR interface
             dce.bind(samr.MSRPC_UUID_SAMR)
-            
+
             # 1. Call SamrConnect to get the server handle
             samrConnectResponse = samr.hSamrConnect(dce)
-            serverHandle = samrConnectResponse['ServerHandle']
-            
+            serverHandle = samrConnectResponse["ServerHandle"]
+
             # 2. Call SamrLookupDomainInSamServer to get the domain SID
             try:
                 # First try with the provided domain name
@@ -2715,63 +2714,63 @@ class smb(connection):
                 if sid_lookup_domain.lower() == self.hostname.lower():
                     # For local accounts, use "Builtin" domain
                     sid_lookup_domain = "Builtin"
-                    
+
                 lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
-                    dce, 
-                    serverHandle, 
+                    dce,
+                    serverHandle,
                     sid_lookup_domain
                 )
-                domainSID = lookupDomainResponse['DomainId']
+                domainSID = lookupDomainResponse["DomainId"]
             except DCERPCException as e:
                 self.logger.debug(f"Error looking up domain SID for {self.domain}: {e}")
                 # If lookup with domain fails, try with hostname for local accounts
                 try:
                     lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
-                        dce, 
-                        serverHandle, 
+                        dce,
+                        serverHandle,
                         self.hostname
                     )
-                    domainSID = lookupDomainResponse['DomainId']
+                    domainSID = lookupDomainResponse["DomainId"]
                 except DCERPCException as e:
                     self.logger.debug(f"Error looking up hostname SID for {self.hostname}: {e}")
                     # Last resort - try builtin domain
                     try:
                         lookupDomainResponse = samr.hSamrLookupDomainInSamServer(
-                            dce, 
-                            serverHandle, 
+                            dce,
+                            serverHandle,
                             "Builtin"
                         )
-                        domainSID = lookupDomainResponse['DomainId']
+                        domainSID = lookupDomainResponse["DomainId"]
                     except DCERPCException as e:
                         self.logger.debug(f"Error looking up Builtin SID: {e}")
                         return None
-            
+
             # 3. Call SamrOpenDomain to get the domain handle
             openDomainResponse = samr.hSamrOpenDomain(
-                dce, 
-                serverHandle, 
+                dce,
+                serverHandle,
                 domainId=domainSID
             )
-            domainHandle = openDomainResponse['DomainHandle']
-            
+            domainHandle = openDomainResponse["DomainHandle"]
+
             # 4. Call SamrLookupNamesInDomain to get the RID
             lookupNamesResponse = samr.hSamrLookupNamesInDomain(
-                dce, 
-                domainHandle, 
+                dce,
+                domainHandle,
                 [self.username]
             )
-            
+
             # Extract the RID from the response
-            rid = lookupNamesResponse['RelativeIds']['Element'][0]['Data']
+            rid = lookupNamesResponse["RelativeIds"]["Element"][0]["Data"]
             self.logger.debug(f"Direct RID query successful - User {self.username} has RID: {rid}")
-            
+
             # 5. Clean up - close handles
             samr.hSamrCloseHandle(dce, domainHandle)
             samr.hSamrCloseHandle(dce, serverHandle)
             dce.disconnect()
-            
+
             return rid
-            
+
         except Exception as e:
             self.logger.debug(f"Direct RID query failed: {e}")
             return None

@@ -34,7 +34,7 @@ def gen_cli_args():
     generic_group.add_argument("--jitter", metavar="INTERVAL", type=str, help="sets a random delay between each authentication")
     generic_group.add_argument("--no-delays", action="store_true", help="Skip all tactical delays (connection, smbexec, etc.)")
     generic_group.add_argument("--nobfs", action="store_true", help="Disable all command obfuscation (makes commands less suspicious-looking but more detectable)")
-    
+
     output_parser = argparse.ArgumentParser(add_help=False, formatter_class=DisplayDefaultsNotNone)
     output_group = output_parser.add_argument_group("Output", "Options to set verbosity levels and control output")
     output_group.add_argument("--verbose", action="store_true", help="enable verbose output")

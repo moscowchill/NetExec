@@ -4,7 +4,7 @@ from time import sleep
 from datetime import datetime
 import random
 from impacket.dcerpc.v5 import transport, scmr
-from nxc.helpers.misc import gen_random_string, PLAUSIBLE_SERVICE_NAMES, countdown_timer
+from nxc.helpers.misc import PLAUSIBLE_SERVICE_NAMES, countdown_timer
 from nxc.paths import TMP_PATH
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
 
@@ -118,33 +118,30 @@ class SMBEXEC:
             comspec_final = "cmd.exe"  # Use cmd.exe directly
             echo_val = "echo"
             move_val = "move"
-            q_flag_val = "/q" # Use lowercase /q
+            q_flag_val = "/q"  # Use lowercase /q
             c_flag_val = "/c"
-            localappdata_final = "%LOCALAPPDATA%" # Standard env var usage
+            localappdata_final = "%LOCALAPPDATA%"  # Standard env var usage
         else:
             comspec_final = f"%{randomize_case('COMSPEC')}%"
-            echo_val = randomize_case('echo')
-            move_val = randomize_case('move')
-            q_flag_val = randomize_case('/q') # Randomize lowercase /q
-            c_flag_val = randomize_case('/c')
+            echo_val = randomize_case("echo")
+            move_val = randomize_case("move")
+            q_flag_val = randomize_case("/q")  # Randomize lowercase /q
+            c_flag_val = randomize_case("/c")
             localappdata_final = f"%{randomize_case('LOCALAPPDATA')}%"
 
         delete_logic = f"{move_val} /y {localappdata_final}\\\\{self.__batchFile} NUL"
         string_to_echo_into_batch = f"{data} ^> \\\\127.0.0.1\\{self.__share}\\{self.__output} 2^>^&1"
 
-        if self.__retOutput:
-            command = (
-                f"{comspec_final} {q_flag_val} {c_flag_val} {echo_val} {string_to_echo_into_batch} > {localappdata_final}\\\\{self.__batchFile} & "
-                f"{comspec_final} {q_flag_val} {c_flag_val} {localappdata_final}\\\\{self.__batchFile} & "
-                f"{comspec_final} {q_flag_val} {c_flag_val} {delete_logic}"
-            )
-        else:
-            command = f"{comspec_final} {q_flag_val} {c_flag_val} {data}"
+        command = (
+            f"{comspec_final} {q_flag_val} {c_flag_val} {echo_val} {string_to_echo_into_batch} > {localappdata_final}\\\\{self.__batchFile} & "
+            f"{comspec_final} {q_flag_val} {c_flag_val} {localappdata_final}\\\\{self.__batchFile} & "
+            f"{comspec_final} {q_flag_val} {c_flag_val} {delete_logic}"
+        ) if self.__retOutput else f"{comspec_final} {q_flag_val} {c_flag_val} {data}"
 
         # The local file at TMP_PATH is not directly used by the remote service in this method.
         # It's more of a placeholder or for other potential uses not realized here.
-        with open(path_join(TMP_PATH, self.__batchFile), "w") as batch_file:
-            pass # Not writing `command` or `string_to_echo_into_batch` here for `execute_remote`.
+        with open(path_join(TMP_PATH, self.__batchFile), "w"):
+            pass  # Not writing `command` or `string_to_echo_into_batch` here for `execute_remote`.
 
         self.logger.debug(f"Content to be echoed into remote batch file: {string_to_echo_into_batch}")
         self.logger.debug(f"Service lpBinaryPathName: {command}")
@@ -249,13 +246,13 @@ class SMBEXEC:
 
         # Determine strings based on nobfs flag
         if self.__nobfs:
-            comspec_final = "cmd.exe" # Use cmd.exe directly
-            q_flag_val = "/q" # Use lowercase /q
+            comspec_final = "cmd.exe"  # Use cmd.exe directly
+            q_flag_val = "/q"  # Use lowercase /q
             c_flag_val = "/c"
         else:
             comspec_final = f"%{randomize_case('COMSPEC')}%"
-            q_flag_val = randomize_case('/q') # Randomize lowercase /q
-            c_flag_val = randomize_case('/c')
+            q_flag_val = randomize_case("/q")  # Randomize lowercase /q
+            c_flag_val = randomize_case("/c")
 
         local_ip = self.__rpctransport.get_socket().getsockname()[0]
 

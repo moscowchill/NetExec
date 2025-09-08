@@ -109,6 +109,7 @@ PLAUSIBLE_CLIENT_NAMES = [
     "POS-Terminal-1",
 ]
 
+
 def countdown_timer(min_delay=3, max_delay=6):
     """Generates a random delay and displays a countdown timer in the terminal."""
     duration = random.randint(min_delay, max_delay)
@@ -120,6 +121,7 @@ def countdown_timer(min_delay=3, max_delay=6):
     # Clear the countdown line after completion
     sys.stdout.write("\r" + " " * 30 + "\r")
     sys.stdout.flush()
+
 
 def identify_target_file(target_file):
     with open(target_file) as target_file_handle:
