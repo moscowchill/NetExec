@@ -98,7 +98,9 @@ class NXCModule:
                 except Exception as e:
                     # Check if file was actually uploaded despite timeout
                     try:
-                        self.connection.conn.getFile(self.share, self.tmp_share + self.nano, open(os.devnull, 'wb').write)
+                        import tempfile
+                        with tempfile.NamedTemporaryFile() as tmp:
+                            self.connection.conn.getFile(self.share, self.tmp_share + self.nano, tmp.write)
                         self.context.log.success(f"Created file {self.nano} on the \\\\{self.share}{self.tmp_share} (timeout during upload but file exists)")
                     except:
                         self.context.log.fail(f"Error writing file to share {self.share}: {e}")
